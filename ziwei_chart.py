@@ -1,10 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 紫微斗数排盘工具（基于 py-iztro）
-
-原版脚本中包含完整的紫微斗数安星实现，但维护成本较高。
-本版本改为直接调用 `py-iztro` 提供的排盘能力，并把结果格式化为
-命盘文本，便于在命令行或 Notebook 中快速查看。
 """
 from __future__ import annotations
 
