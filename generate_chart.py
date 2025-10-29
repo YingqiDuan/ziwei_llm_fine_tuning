@@ -118,8 +118,8 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("dataset/ziwei_dataset.jsonl"),
-        help="Target dataset file (default: dataset/ziwei_dataset.jsonl).",
+        default=Path("dataset/ziwei_chart_dataset.jsonl"),
+        help="Target dataset file (default: dataset/ziwei_chart_dataset.jsonl).",
     )
     parser.add_argument(
         "--start-year",
