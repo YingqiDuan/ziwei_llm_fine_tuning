@@ -27,13 +27,8 @@ from typing import Callable, List, Optional
 import torch
 from datasets import Dataset, load_dataset
 from peft import LoraConfig, prepare_model_for_kbit_training
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    BitsAndBytesConfig,
-    TrainingArguments,
-)
-from trl import DataCollatorForCompletionOnlyLM, SFTTrainer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from trl import SFTConfig, SFTTrainer
 
 
 @dataclass
@@ -280,55 +275,35 @@ def load_chat_dataset(path: str) -> Dataset:
     return load_dataset("json", data_files=path, split="train")
 
 
-def build_prompt_formatter(
-    tokenizer: AutoTokenizer, args: ScriptArgs
-) -> tuple[Callable[[dict], List[str]], str]:
-    assistant_prefix = "<|assistant|>\n"
+def apply_system_prompt_preferences(dataset: Dataset, args: ScriptArgs) -> Dataset:
+    if args.system_prompt_override:
+        def _override(example):
+            messages = example.get("messages")
+            if isinstance(messages, list):
+                messages = [
+                    m for m in messages if m.get("role") != "system"
+                ]
+                messages.insert(0, {"role": "system", "content": args.system_prompt_override})
+                example["messages"] = messages
+            return example
 
-    role_prefix = {
-        "system": "<|system|>\n",
-        "user": "<|user|>\n",
-        "assistant": assistant_prefix,
-    }
+        return dataset.map(_override)
 
-    def formatter(example) -> List[str]:
-        messages = example["messages"]
-
-        # Apply override or per-record system prompt if requested.
-        if args.system_prompt_override is not None:
-            messages = [
-                m for m in messages if m.get("role") != "system"
-            ]
-            messages.insert(
-                0, {"role": "system", "content": args.system_prompt_override}
-            )
-        elif args.prefer_record_system_prompt and "system_prompt" in example:
-            # If original dataset carried system_prompt field, ensure it's first.
+    if args.prefer_record_system_prompt:
+        def _prefer(example):
             system_prompt = example.get("system_prompt")
-            if system_prompt:
+            messages = example.get("messages")
+            if system_prompt and isinstance(messages, list):
                 messages = [
                     m for m in messages if m.get("role") != "system"
                 ]
                 messages.insert(0, {"role": "system", "content": system_prompt})
+                example["messages"] = messages
+            return example
 
-        parts: List[str] = []
-        for message in messages:
-            role = message.get("role", "user").lower()
-            content = message.get("content", "")
-            header = role_prefix.get(role, "<|user|>\n")
-            segment = header + content
-            if not segment.endswith("\n"):
-                segment += "\n"
-            parts.append(segment)
+        return dataset.map(_prefer)
 
-        text = "".join(parts)
-
-        if tokenizer.eos_token and not text.endswith(tokenizer.eos_token):
-            text += tokenizer.eos_token
-
-        return [text]
-
-    return formatter, assistant_prefix
+    return dataset
 
 
 def main() -> None:
@@ -355,9 +330,11 @@ def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(
         args.model_name,
         use_fast=False,
+        trust_remote_code=True,
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"
 
     model_kwargs = {
         "device_map": device_map,
@@ -409,6 +386,7 @@ def main() -> None:
     )
 
     dataset = load_chat_dataset(args.dataset_path)
+    dataset = apply_system_prompt_preferences(dataset, args)
 
     eval_dataset = None
     if args.validation_split and 0.0 < args.validation_split < 1.0:
@@ -416,18 +394,7 @@ def main() -> None:
         dataset = split["train"]
         eval_dataset = split["test"]
 
-    formatter, response_template = build_prompt_formatter(tokenizer, args)
-    response_template_ids = tokenizer.encode(
-        response_template, add_special_tokens=False
-    )
-
-    data_collator = DataCollatorForCompletionOnlyLM(
-        tokenizer=tokenizer,
-        response_template=response_template,
-        response_template_ids=response_template_ids,
-    )
-
-    training_args = TrainingArguments(
+    training_args = SFTConfig(
         output_dir=args.output_dir,
         per_device_train_batch_size=args.per_device_train_batch_size,
         per_device_eval_batch_size=args.per_device_eval_batch_size,
@@ -447,6 +414,9 @@ def main() -> None:
         load_best_model_at_end=eval_dataset is not None,
         report_to="none",
         seed=args.seed,
+        packing=args.packing,
+        max_seq_length=args.max_seq_length,
+        assistant_only_loss=True,
     )
 
     trainer = SFTTrainer(
@@ -456,10 +426,8 @@ def main() -> None:
         tokenizer=tokenizer,
         train_dataset=dataset,
         eval_dataset=eval_dataset,
-        formatting_func=formatter,
         max_seq_length=args.max_seq_length,
         packing=args.packing,
-        data_collator=data_collator,
     )
 
     trainer.train()
