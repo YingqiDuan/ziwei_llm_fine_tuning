@@ -6,7 +6,15 @@ Example:
     python train_qlora.py \
         --model-name unsloth/gpt-oss-20b \
         --dataset-path dataset/ziwei_ollama_train.jsonl \
-        --output-dir outputs/gpt-oss-20b-qlora
+        --output-dir outputs/gpt-oss-20b-qlora \
+        --quantization 4bit
+
+If your checkpoint is already quantized (e.g., MXFP4), run with:
+    python train_qlora.py \
+        --model-name your/local/model \
+        --dataset-path dataset/ziwei_ollama_train.jsonl \
+        --output-dir outputs/gpt-oss-20b-qlora \
+        --quantization none --full-precision-dtype auto
 """
 
 from __future__ import annotations
@@ -14,7 +22,7 @@ from __future__ import annotations
 import argparse
 import os
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import torch
 from datasets import Dataset, load_dataset
@@ -25,7 +33,7 @@ from transformers import (
     BitsAndBytesConfig,
     TrainingArguments,
 )
-from trl import SFTTrainer
+from trl import DataCollatorForCompletionOnlyLM, SFTTrainer
 
 
 @dataclass
@@ -57,6 +65,8 @@ class ScriptArgs:
     gradient_checkpointing: bool
     system_prompt_override: Optional[str]
     prefer_record_system_prompt: bool
+    quantization: str
+    full_precision_dtype: str
 
 
 def parse_args() -> ScriptArgs:
@@ -207,6 +217,26 @@ def parse_args() -> ScriptArgs:
         action="store_true",
         help="Use per-record system_prompt when available (ignored if override is set).",
     )
+    parser.add_argument(
+        "--quantization",
+        choices=("4bit", "8bit", "none"),
+        default="4bit",
+        help=(
+            "Quantization mode for loading the base model. "
+            "'4bit' enables QLoRA-style loading via bitsandbytes; "
+            "'8bit' uses 8-bit weights; 'none' keeps the model's native precision "
+            "(use this if your checkpoint is already quantized, e.g., MXFP4)."
+        ),
+    )
+    parser.add_argument(
+        "--full-precision-dtype",
+        choices=("auto", "float16", "bfloat16", "float32"),
+        default="float16",
+        help=(
+            "When --quantization=none, specify the torch dtype used to load weights. "
+            "Set to 'auto' to let Transformers choose."
+        ),
+    )
 
     args = parser.parse_args()
     return ScriptArgs(
@@ -237,6 +267,8 @@ def parse_args() -> ScriptArgs:
         gradient_checkpointing=args.gradient_checkpointing,
         system_prompt_override=args.system_prompt_override,
         prefer_record_system_prompt=args.prefer_record_system_prompt,
+        quantization=args.quantization,
+        full_precision_dtype=args.full_precision_dtype,
     )
 
 
@@ -250,7 +282,15 @@ def load_chat_dataset(path: str) -> Dataset:
 
 def build_prompt_formatter(
     tokenizer: AutoTokenizer, args: ScriptArgs
-):
+) -> tuple[Callable[[dict], List[str]], str]:
+    assistant_prefix = "<|assistant|>\n"
+
+    role_prefix = {
+        "system": "<|system|>\n",
+        "user": "<|user|>\n",
+        "assistant": assistant_prefix,
+    }
+
     def formatter(example) -> List[str]:
         messages = example["messages"]
 
@@ -271,28 +311,24 @@ def build_prompt_formatter(
                 ]
                 messages.insert(0, {"role": "system", "content": system_prompt})
 
-        text: Optional[str] = None
-        if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
-            text = tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=False,
-            )
-        else:
-            # Fallback template: simple role-tagged transcript.
-            parts = []
-            for message in messages:
-                role = message.get("role", "user").upper()
-                content = message.get("content", "")
-                parts.append(f"<|{role}|>\n{content}\n</|{role}|>")
-            text = "\n".join(parts)
+        parts: List[str] = []
+        for message in messages:
+            role = message.get("role", "user").lower()
+            content = message.get("content", "")
+            header = role_prefix.get(role, "<|user|>\n")
+            segment = header + content
+            if not segment.endswith("\n"):
+                segment += "\n"
+            parts.append(segment)
+
+        text = "".join(parts)
 
         if tokenizer.eos_token and not text.endswith(tokenizer.eos_token):
             text += tokenizer.eos_token
 
         return [text]
 
-    return formatter
+    return formatter, assistant_prefix
 
 
 def main() -> None:
@@ -302,12 +338,19 @@ def main() -> None:
     device_map = "auto"
     compute_dtype = torch.bfloat16 if args.bf16 else torch.float16
 
-    quant_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=compute_dtype,
-    )
+    quant_config = None
+    if args.quantization == "4bit":
+        quant_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=compute_dtype,
+        )
+    elif args.quantization == "8bit":
+        quant_config = BitsAndBytesConfig(
+            load_in_8bit=True,
+            llm_int8_has_fp16_weight=False,
+        )
 
     tokenizer = AutoTokenizer.from_pretrained(
         args.model_name,
@@ -316,18 +359,32 @@ def main() -> None:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    model_kwargs = {
+        "device_map": device_map,
+    }
+    if quant_config is not None:
+        model_kwargs["quantization_config"] = quant_config
+        model_kwargs["torch_dtype"] = compute_dtype
+    else:
+        if args.full_precision_dtype != "auto":
+            dtype_map = {
+                "float16": torch.float16,
+                "bfloat16": torch.bfloat16,
+                "float32": torch.float32,
+            }
+            model_kwargs["torch_dtype"] = dtype_map[args.full_precision_dtype]
+
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
-        quantization_config=quant_config,
-        device_map=device_map,
-        torch_dtype=compute_dtype,
+        **model_kwargs,
     )
 
     if args.gradient_checkpointing:
         model.gradient_checkpointing_enable()
         model.config.use_cache = False
 
-    model = prepare_model_for_kbit_training(model)
+    if args.quantization in {"4bit", "8bit"}:
+        model = prepare_model_for_kbit_training(model)
 
     target_modules = args.target_modules
     if target_modules is None:
@@ -359,7 +416,16 @@ def main() -> None:
         dataset = split["train"]
         eval_dataset = split["test"]
 
-    formatter = build_prompt_formatter(tokenizer, args)
+    formatter, response_template = build_prompt_formatter(tokenizer, args)
+    response_template_ids = tokenizer.encode(
+        response_template, add_special_tokens=False
+    )
+
+    data_collator = DataCollatorForCompletionOnlyLM(
+        tokenizer=tokenizer,
+        response_template=response_template,
+        response_template_ids=response_template_ids,
+    )
 
     training_args = TrainingArguments(
         output_dir=args.output_dir,
@@ -393,6 +459,7 @@ def main() -> None:
         formatting_func=formatter,
         max_seq_length=args.max_seq_length,
         packing=args.packing,
+        data_collator=data_collator,
     )
 
     trainer.train()
@@ -402,4 +469,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
