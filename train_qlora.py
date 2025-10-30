@@ -37,9 +37,9 @@ GENERATION_AWARE_TEMPLATE = """{%- for message in messages %}
 {{ '<|im_start|>user\\n' + message['content'] + '<|im_end|>\\n' }}
 {%- elif message['role'] == 'assistant' %}
 {{ '<|im_start|>assistant\\n' }}
-{%- generation %}
+{% generation %}
 {{ message['content'] }}
-{%- endgeneration %}
+{% endgeneration %}
 {{ '<|im_end|>\\n' }}
 {%- elif message['role'] == 'tool' %}
 {{ '<|im_start|>tool\\n' + message['content'] + '<|im_end|>\\n' }}
@@ -47,7 +47,8 @@ GENERATION_AWARE_TEMPLATE = """{%- for message in messages %}
 {%- endfor %}
 {%- if add_generation_prompt %}
 {{ '<|im_start|>assistant\\n' }}
-{%- generation %}{%- endgeneration %}
+{% generation %}
+{% endgeneration %}
 {%- endif %}"""
 
 
