@@ -27,8 +27,28 @@ from typing import Callable, List, Optional
 import torch
 from datasets import Dataset, load_dataset
 from peft import LoraConfig, prepare_model_for_kbit_training
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
+
+GENERATION_AWARE_TEMPLATE = """{%- for message in messages %}
+{%- if message['role'] == 'system' %}
+{{ '<|im_start|>system\\n' + message['content'] + '<|im_end|>\\n' }}
+{%- elif message['role'] == 'user' %}
+{{ '<|im_start|>user\\n' + message['content'] + '<|im_end|>\\n' }}
+{%- elif message['role'] == 'assistant' %}
+{{ '<|im_start|>assistant\\n' }}
+{%- generation %}
+{{ message['content'] }}
+{%- endgeneration %}
+{{ '<|im_end|>\\n' }}
+{%- elif message['role'] == 'tool' %}
+{{ '<|im_start|>tool\\n' + message['content'] + '<|im_end|>\\n' }}
+{%- endif %}
+{%- endfor %}
+{%- if add_generation_prompt %}
+{{ '<|im_start|>assistant\\n' }}
+{%- generation %}{%- endgeneration %}
+{%- endif %}"""
 
 
 @dataclass
@@ -122,7 +142,7 @@ def parse_args() -> ScriptArgs:
     parser.add_argument(
         "--max-seq-length",
         type=int,
-        default=2048,
+        default=4096,
         help="Maximum sequence length (tokens) for each packed sample.",
     )
     parser.add_argument(
@@ -306,6 +326,57 @@ def apply_system_prompt_preferences(dataset: Dataset, args: ScriptArgs) -> Datas
     return dataset
 
 
+def chat_template_supports_assistant_masks(tokenizer: AutoTokenizer) -> bool:
+    if not hasattr(tokenizer, "apply_chat_template"):
+        return False
+
+    sample = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there!"},
+    ]
+    try:
+        processed = tokenizer.apply_chat_template(
+            sample,
+            tokenize=True,
+            return_dict=True,
+            return_assistant_tokens_mask=True,
+        )
+    except Exception:
+        return False
+
+    assistant_masks = processed.get("assistant_masks")
+    if assistant_masks is None:
+        return False
+
+    if isinstance(assistant_masks, list):
+        if assistant_masks and isinstance(assistant_masks[0], list):
+            assistant_masks = assistant_masks[0]
+        return any(bool(x) for x in assistant_masks)
+
+    try:
+        # tensors or numpy arrays
+        return bool(assistant_masks.any())
+    except Exception:
+        return False
+
+
+def ensure_generation_keyword(tokenizer: AutoTokenizer) -> None:
+    if chat_template_supports_assistant_masks(tokenizer):
+        return
+
+    print(
+        "[train_qlora] Updating tokenizer chat_template to include `{% generation %}` for assistant-only loss."
+    )
+    tokenizer.chat_template = GENERATION_AWARE_TEMPLATE
+
+    if not chat_template_supports_assistant_masks(tokenizer):
+        raise RuntimeError(
+            "Failed to configure a generation-aware chat template. "
+            "Please provide a compatible template or adjust training settings."
+        )
+
+
 def main() -> None:
     args = parse_args()
     ensure_output_dir(args.output_dir)
@@ -313,15 +384,52 @@ def main() -> None:
     device_map = "auto"
     compute_dtype = torch.bfloat16 if args.bf16 else torch.float16
 
+    config = None
+    try:
+        config = AutoConfig.from_pretrained(
+            args.model_name,
+            trust_remote_code=True,
+        )
+    except Exception as exc:
+        print(
+            f"[train_qlora] Warning: unable to inspect base config for quantization"
+            f" ({exc}). Proceeding with CLI-provided flags."
+        )
+
+    existing_quant_config = getattr(config, "quantization_config", None) if config else None
+    effective_quantization = args.quantization
+    should_set_dtype = args.full_precision_dtype != "auto"
+
+    if existing_quant_config is not None:
+        quant_name = getattr(existing_quant_config, "quant_method", None)
+        if quant_name is None:
+            quant_name = getattr(existing_quant_config, "quantization_method", None)
+        if quant_name is None and hasattr(existing_quant_config, "to_dict"):
+            quant_name = existing_quant_config.to_dict().get("quant_method")
+        if quant_name is None and isinstance(existing_quant_config, dict):
+            quant_name = existing_quant_config.get("quant_method")
+        if quant_name is None:
+            quant_name = type(existing_quant_config).__name__
+
+        if args.quantization != "none":
+            print(
+                "[train_qlora] Detected existing quantization"
+                f" ({quant_name}); ignoring --quantization={args.quantization} to avoid"
+                " configuration conflicts. Re-run with --quantization none to silence this"
+                " warning."
+            )
+        effective_quantization = "none"
+        should_set_dtype = False
+
     quant_config = None
-    if args.quantization == "4bit":
+    if effective_quantization == "4bit":
         quant_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_use_double_quant=True,
             bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=compute_dtype,
         )
-    elif args.quantization == "8bit":
+    elif effective_quantization == "8bit":
         quant_config = BitsAndBytesConfig(
             load_in_8bit=True,
             llm_int8_has_fp16_weight=False,
@@ -336,20 +444,21 @@ def main() -> None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
+    ensure_generation_keyword(tokenizer)
+
     model_kwargs = {
         "device_map": device_map,
     }
     if quant_config is not None:
         model_kwargs["quantization_config"] = quant_config
-        model_kwargs["torch_dtype"] = compute_dtype
-    else:
-        if args.full_precision_dtype != "auto":
-            dtype_map = {
-                "float16": torch.float16,
-                "bfloat16": torch.bfloat16,
-                "float32": torch.float32,
-            }
-            model_kwargs["torch_dtype"] = dtype_map[args.full_precision_dtype]
+        model_kwargs["dtype"] = compute_dtype
+    elif should_set_dtype:
+        dtype_map = {
+            "float16": torch.float16,
+            "bfloat16": torch.bfloat16,
+            "float32": torch.float32,
+        }
+        model_kwargs["dtype"] = dtype_map[args.full_precision_dtype]
 
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
@@ -360,7 +469,7 @@ def main() -> None:
         model.gradient_checkpointing_enable()
         model.config.use_cache = False
 
-    if args.quantization in {"4bit", "8bit"}:
+    if effective_quantization in {"4bit", "8bit"}:
         model = prepare_model_for_kbit_training(model)
 
     target_modules = args.target_modules
@@ -393,6 +502,12 @@ def main() -> None:
         split = dataset.train_test_split(test_size=args.validation_split, seed=args.seed)
         dataset = split["train"]
         eval_dataset = split["test"]
+        print(
+            f"[train_qlora] Dataset split into {len(dataset)} train and {len(eval_dataset)} eval samples "
+            f"(validation_split={args.validation_split})."
+        )
+    else:
+        print(f"[train_qlora] Loaded dataset with {len(dataset)} samples (no validation split).")
 
     training_args = SFTConfig(
         output_dir=args.output_dir,
@@ -409,13 +524,13 @@ def main() -> None:
         weight_decay=args.weight_decay,
         bf16=args.bf16,
         fp16=not args.bf16,
-        evaluation_strategy=args.evaluation_strategy,
+        eval_strategy=args.evaluation_strategy,
         save_total_limit=3,
         load_best_model_at_end=eval_dataset is not None,
         report_to="none",
         seed=args.seed,
         packing=args.packing,
-        max_seq_length=args.max_seq_length,
+        max_length=args.max_seq_length,
         assistant_only_loss=True,
     )
 
@@ -423,16 +538,28 @@ def main() -> None:
         model=model,
         args=training_args,
         peft_config=peft_config,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         train_dataset=dataset,
         eval_dataset=eval_dataset,
-        max_seq_length=args.max_seq_length,
-        packing=args.packing,
+    )
+
+    if hasattr(trainer.model, "print_trainable_parameters"):
+        trainer.model.print_trainable_parameters()
+    else:
+        trainable = sum(p.numel() for p in trainer.model.parameters() if p.requires_grad)
+        print(f"[train_qlora] Trainable parameter count: {trainable:,}")
+
+    print(
+        "[train_qlora] Starting training "
+        f"(epochs={training_args.num_train_epochs}, max_steps={training_args.max_steps}, "
+        f"batch_size={training_args.per_device_train_batch_size}, grad_accum={training_args.gradient_accumulation_steps})."
     )
 
     trainer.train()
+    print("[train_qlora] Training complete. Saving adapter and tokenizer...")
     trainer.model.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
+    print(f"[train_qlora] Saved artifacts to {args.output_dir}")
 
 
 if __name__ == "__main__":
