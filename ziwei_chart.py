@@ -90,19 +90,29 @@ def _iter_palaces_in_ming_order(palaces: Sequence[PalaceModel]) -> Iterable[Pala
     count = len(palaces)
     for offset in range(count):
         yield palaces[(ming_index + offset) % count]
-    return None
 
 
 def render_chart(model: AstrolabeModel) -> str:
     """
     将 py-iztro 的 AstrolabeModel 渲染为多行字符串，结构与旧版保持相似。
     """
-    lines: list[str] = ["紫微斗数命盘", "│", "├基本信息", "│ │", f"│ ├性别 : {model.gender}",
-                        f"│ ├阳历 : {model.solar_date} {model.time} ({model.time_range})",
-                        f"│ ├农历 : {model.lunar_date}", f"│ ├干支 : {model.chinese_date}", f"│ ├命主 : {model.soul}",
-                        f"│ ├身主 : {model.body}", f"│ ├命宫地支 : {model.earthly_branch_of_soul_palace}",
-                        f"│ ├身宫地支 : {model.earthly_branch_of_body_palace}",
-                        f"│ └五行局 : {model.five_elements_class}", "│", "├命盘十二宫", "│ │"]
+    lines: list[str] = []
+    lines.append("紫微斗数命盘")
+    lines.append("│")
+    lines.append("├基本信息")
+    lines.append("│ │")
+    lines.append(f"│ ├性别 : {model.gender}")
+    lines.append(f"│ ├阳历 : {model.solar_date} {model.time} ({model.time_range})")
+    lines.append(f"│ ├农历 : {model.lunar_date}")
+    lines.append(f"│ ├干支 : {model.chinese_date}")
+    lines.append(f"│ ├命主 : {model.soul}")
+    lines.append(f"│ ├身主 : {model.body}")
+    lines.append(f"│ ├命宫地支 : {model.earthly_branch_of_soul_palace}")
+    lines.append(f"│ ├身宫地支 : {model.earthly_branch_of_body_palace}")
+    lines.append(f"│ └五行局 : {model.five_elements_class}")
+    lines.append("│")
+    lines.append("├命盘十二宫")
+    lines.append("│ │")
 
     for palace in _iter_palaces_in_ming_order(model.palaces):
         tags: list[str] = []
