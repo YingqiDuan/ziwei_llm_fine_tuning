@@ -25,8 +25,6 @@ python generate_chart.py \
 ## 3. Augment With Grok Completions
 Calls the xAI chat API to turn each chart into an analytical answer.
 ```bash
-export XAI_API_KEY=your_key_here  # or load via .env
-
 python augment.py \
   --input dataset/ziwei_chart_dataset.jsonl \
   --output dataset/ziwei_answer_dataset.jsonl \
