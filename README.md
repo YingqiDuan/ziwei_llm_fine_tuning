@@ -49,7 +49,7 @@ python extract.py \
 Run minimal supervised fine-tuning against the generated chat data.
 ```bash
 python train_qlora.py \
-  --model-name unsloth/gpt-oss-20b \
+  --model-name gpt-oss-20b \
   --dataset-path dataset/ziwei_ollama_train.jsonl \
   --output-dir outputs/gpt-oss-20b-qlora \
   --batch-size 1 \
