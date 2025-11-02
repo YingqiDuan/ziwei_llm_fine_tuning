@@ -1,5 +1,6 @@
 """
 Minimal converter from prompt/completion JSONL to Ollama chat format.
+Prefers record-specific system prompts when present, but allows a CLI override.
 """
 
 import argparse
@@ -19,7 +20,7 @@ def parse_args():
         "--system-prompt",
         type=str,
         default=None,
-        help="Optional system prompt to prepend per conversation.",
+        help="Override system prompt for every conversation.",
     )
     return parser.parse_args()
 
@@ -27,6 +28,12 @@ def parse_args():
 def default_output_path(path: Path) -> Path:
     suffix = path.suffix or ".jsonl"
     return path.with_name(f"{path.stem}_ollama{suffix}")
+
+
+def resolve_system_prompt(cli_prompt: str | None, record: dict) -> str | None:
+    if cli_prompt is not None:
+        return cli_prompt
+    return record.get("system_prompt")
 
 
 def main() -> None:
@@ -45,9 +52,11 @@ def main() -> None:
             if prompt is None or completion is None:
                 raise ValueError(f"Missing prompt/completion at line {lineno}")
 
+            system_prompt = resolve_system_prompt(args.system_prompt, record)
+
             messages = []
-            if args.system_prompt:
-                messages.append({"role": "system", "content": args.system_prompt})
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
             messages.append({"role": "assistant", "content": completion})
 
