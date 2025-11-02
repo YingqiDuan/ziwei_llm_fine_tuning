@@ -55,8 +55,7 @@ python train_qlora.py \
   --batch-size 1 \
   --grad-accum 8 \
   --learning-rate 2e-4 \
-  --epochs 3 \
-  --max-seq-length 4096
+  --epochs 3
 ```
 - Adjust `--model-name` to point to any compatible HF checkpoint (local or remote).
 - The script loads the base model in 4-bit precision and saves only the LoRA adapter plus tokenizer.
