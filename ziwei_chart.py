@@ -11,7 +11,6 @@ from typing import Iterable, Literal, Sequence
 from py_iztro import Astro, AstrolabeModel
 from py_iztro.core.models import PalaceModel, StarModel
 
-# 单例 Astro 客户端，避免重复初始化 JS 虚拟机
 ASTRO_CLIENT = Astro()
 
 
@@ -94,7 +93,7 @@ def _iter_palaces_in_ming_order(palaces: Sequence[PalaceModel]) -> Iterable[Pala
 
 def render_chart(model: AstrolabeModel) -> str:
     """
-    将 py-iztro 的 AstrolabeModel 渲染为多行字符串，结构与旧版保持相似。
+    将 py-iztro 的 AstrolabeModel 渲染为多行字符串
     """
     lines: list[str] = []
     lines.append("紫微斗数命盘")
