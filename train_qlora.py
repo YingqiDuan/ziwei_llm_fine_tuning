@@ -22,7 +22,6 @@ def parse_args():
     parser.add_argument("--grad-accum", type=int, default=8, help="Gradient accumulation steps.")
     parser.add_argument("--learning-rate", type=float, default=2e-4, help="AdamW learning rate.")
     parser.add_argument("--epochs", type=float, default=3.0, help="Number of training epochs.")
-    parser.add_argument("--max-seq-length", type=int, default=4096, help="Maximum sequence length.")
     return parser.parse_args()
 
 
@@ -78,7 +77,6 @@ def main() -> None:
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.learning_rate,
         num_train_epochs=args.epochs,
-        max_seq_length=args.max_seq_length,
         logging_steps=10,
         save_strategy="no",
         eval_strategy="no",
