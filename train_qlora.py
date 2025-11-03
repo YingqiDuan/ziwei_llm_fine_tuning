@@ -60,7 +60,8 @@ def main() -> None:
             "{% endfor %}"
             "{% if add_generation_prompt %}\n"
             "{% generation %}\n"
-            "{{ '<|im_start|>assistant\\n' }}"
+            "{{ '<|im_start|>assistant\\n' }}\n"
+            "{% endgeneration %}"
             "{% endif %}"
         )
 
