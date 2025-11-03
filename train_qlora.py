@@ -38,6 +38,32 @@ def main() -> None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
+    # TRL's assistant-only masking requires the chat template to include the
+    # `{% generation %}` marker. Older Qwen releases omit it, so we patch in a
+    # minimal template compatible with the model's conversation format.
+    needs_generation_marker = "{% generation %}" not in (tokenizer.chat_template or "")
+    if needs_generation_marker and "qwen" in args.model_name.lower():
+        tokenizer.chat_template = (
+            "{{ bos_token or '' }}\n"
+            "{% for message in messages %}\n"
+            "{% if message['role'] == 'system' %}"
+            "{{ '<|im_start|>system\\n' + message['content'] + '<|im_end|>\\n' }}"
+            "{% elif message['role'] == 'user' %}"
+            "{{ '<|im_start|>user\\n' + message['content'] + '<|im_end|>\\n' }}"
+            "{% elif message['role'] == 'assistant' %}"
+            "{{ '<|im_start|>assistant\\n' + message['content'] + '<|im_end|>\\n' }}"
+            "{% elif message['role'] == 'tool' %}"
+            "{{ '<|im_start|>tool\\n' + message['content'] + '<|im_end|>\\n' }}"
+            "{% else %}"
+            "{{ '<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>\\n' }}"
+            "{% endif %}\n"
+            "{% endfor %}"
+            "{% if add_generation_prompt %}\n"
+            "{% generation %}\n"
+            "{{ '<|im_start|>assistant\\n' }}"
+            "{% endif %}"
+        )
+
     quant_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_use_double_quant=True,
