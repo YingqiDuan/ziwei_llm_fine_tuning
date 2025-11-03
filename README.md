@@ -60,7 +60,14 @@ python train_qlora.py \
 - Adjust `--model-name` to point to any compatible HF checkpoint (local or remote).
 - The script loads the base model in 4-bit precision and saves only the LoRA adapter plus tokenizer.
 
-## Tips
-- All scripts are idempotent with their default paths—rerun a stage to overwrite or append as needed.
-- Inspect intermediate JSONL files in `dataset/` to spot-check data quality before moving to the next step.
-- When experimenting, start with smaller `--count` / `--limit` values and short training epochs to validate the pipeline quickly.
+## 6. Run Inference With the Adapter
+Use the inference script to apply the fine-tuned adapter alongside the base model.
+```bash
+python infer.py \
+  --base-model gpt-oss-20b \
+  --adapter outputs/gpt-oss-20b-qlora \
+  --prompt "your chart"
+```
+- Optional flags:
+  - `--system-prompt` 
+  - `--max-new-tokens`, `--temperature`, `--top-p` for decoding tweaks.
