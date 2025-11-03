@@ -1,6 +1,6 @@
 """
-Minimal converter from prompt/completion JSONL to Ollama chat format.
-Prefers record-specific system prompts when present, but allows a CLI override.
+Convert prompt/completion JSONL into a flattened format for supervised tuning.
+Supports optional system prompts by prepending them to the user prompt content.
 """
 
 import argparse
@@ -11,25 +11,28 @@ from prompts import DEFAULT_SYSTEM_PROMPT
 
 
 def parse_args():
-    parser = argparse.ArgumentParser("Convert prompt/completion pairs to Ollama chat JSONL.")
+    parser = argparse.ArgumentParser("Normalize prompt/completion pairs for fine-tuning.")
     parser.add_argument("--input", required=True, type=Path, help="Source JSONL file.")
     parser.add_argument(
         "--output",
         type=Path,
-        help="Destination JSONL. Defaults to <input>_ollama.jsonl.",
+        help="Destination JSONL. Defaults to <input>_prompt_completion.jsonl.",
     )
     parser.add_argument(
         "--system-prompt",
         type=str,
         default=DEFAULT_SYSTEM_PROMPT,
-        help="Override system prompt for every conversation (defaults to shared Grok prompt).",
+        help=(
+            "Override system prompt to prepend to each prompt. "
+            "Record-level system prompts take precedence when present."
+        ),
     )
     return parser.parse_args()
 
 
 def default_output_path(path: Path) -> Path:
     suffix = path.suffix or ".jsonl"
-    return path.with_name(f"{path.stem}_ollama{suffix}")
+    return path.with_name(f"{path.stem}_prompt_completion{suffix}")
 
 
 def resolve_system_prompt(cli_prompt: str | None, record: dict) -> str | None:
@@ -55,17 +58,16 @@ def main() -> None:
                 raise ValueError(f"Missing prompt/completion at line {lineno}")
 
             system_prompt = resolve_system_prompt(args.system_prompt, record)
-
-            messages = []
+            prompt_chunks = []
             if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": prompt})
-            messages.append({"role": "assistant", "content": completion})
+                prompt_chunks.append(system_prompt.strip())
+            prompt_chunks.append(prompt)
+            merged_prompt = "\n\n".join(chunk for chunk in prompt_chunks if chunk)
 
-            json.dump({"messages": messages}, dst, ensure_ascii=False)
+            json.dump({"prompt": merged_prompt, "completion": completion}, dst, ensure_ascii=False)
             dst.write("\n")
 
-    print(f"[extract] Wrote Ollama chat dataset to {output_path}")
+    print(f"[extract] Wrote prompt/completion dataset to {output_path}")
 
 
 if __name__ == "__main__":

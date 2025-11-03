@@ -1,5 +1,5 @@
 """
-Minimal QLoRA fine-tuning script for chat-style JSONL datasets.
+Minimal QLoRA fine-tuning script for prompt/completion JSONL datasets.
 Only the essentials are retained so you can point to a model, a dataset, and an output path.
 """
 
@@ -16,7 +16,7 @@ from trl import SFTConfig
 def parse_args():
     parser = argparse.ArgumentParser("Train a QLoRA adapter with minimal knobs.")
     parser.add_argument("--model-name", required=True, help="Base model name or local path.")
-    parser.add_argument("--dataset-path", required=True, help="JSONL dataset in Ollama chat format.")
+    parser.add_argument("--dataset-path", required=True, help="JSONL dataset with prompt/completion pairs.")
     parser.add_argument("--output-dir", required=True, help="Directory to save the adapter/tokenizer.")
     parser.add_argument("--batch-size", type=int, default=1, help="Per-device train batch size.")
     parser.add_argument("--grad-accum", type=int, default=8, help="Gradient accumulation steps.")
@@ -48,9 +48,6 @@ def main() -> None:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
-
-    print("[train_qlora] Using chat template:")
-    print(tokenizer.chat_template or "[no chat template configured]")
 
     quant_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -99,20 +96,14 @@ def main() -> None:
         max_seq_length = int(tokenizer_max_length)
 
     def split_prompt_completion(example):
-        messages = example["messages"]
-        if not messages:
-            raise ValueError("Expected at least one message per example.")
-        if messages[-1]["role"] != "assistant":
-            raise ValueError("Last message must be from the assistant for training.")
-
-        prompt_chunks = []
-        for message in messages[:-1]:
-            if message["role"] in {"system", "user"}:
-                prompt_chunks.append(f"{message['role'].upper()}:\n{message['content']}\n")
-        prompt_text = "\n".join(prompt_chunks).strip()
-        if prompt_text:
-            prompt_text += "\n\n"
-        completion_text = messages[-1]["content"]
+        prompt_text = example.get("prompt")
+        completion_text = example.get("completion")
+        if completion_text is None:
+            raise ValueError("Each example must include a completion.")
+        if prompt_text is None:
+            prompt_text = ""
+        prompt_text = prompt_text.strip()
+        completion_text = completion_text.strip()
 
         prompt_ids = tokenizer(prompt_text, add_special_tokens=False)["input_ids"]
         completion_ids = tokenizer(completion_text, add_special_tokens=False)["input_ids"]
@@ -126,13 +117,7 @@ def main() -> None:
 
         attention_mask = [1] * len(input_ids)
 
-        return {
-            "prompt": prompt_text,
-            "completion": completion_text,
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "labels": labels,
-        }
+        return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
 
     dataset = dataset.map(split_prompt_completion, remove_columns=dataset.column_names)
 

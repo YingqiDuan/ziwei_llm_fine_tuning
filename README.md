@@ -35,22 +35,20 @@ python augment.py \
 - `--resume` appends to an existing output file while skipping prompts already processed.
 - Adjust `--system-prompt`, `--model`, and `--sleep` as needed.
 
-## 4. Convert to Ollama Chat Format
-Produces the chat-style JSONL expected by TRL’s SFT pipeline.
+## 4. Flatten Prompt/Completion Pairs
+Produces a simplified JSONL with `prompt` and `completion` fields for supervised fine-tuning.
 ```bash
 python extract.py \
   --input dataset/ziwei_answer_dataset.jsonl \
-  --output dataset/ziwei_ollama_train.jsonl \
+  --output dataset/ziwei_answer_dataset_prompt_completion.jsonl \
 ```
-- If `--output` is omitted, the script writes to `<input>_ollama.jsonl`.
-- `--system-prompt` defaults to统一的紫微顾问提示，可按需覆盖。
 
 ## 5. Fine-Tune With QLoRA
-Run minimal supervised fine-tuning against the generated chat data.
+Run minimal supervised fine-tuning against the flattened prompt/completion data.
 ```bash
 python train_qlora.py \
   --model-name gpt-oss-20b \
-  --dataset-path dataset/ziwei_ollama_train.jsonl \
+  --dataset-path dataset/ziwei_answers_prompt_completion.jsonl \
   --output-dir outputs/gpt-oss-20b-qlora \
   --batch-size 1 \
   --grad-accum 8 \
