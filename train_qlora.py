@@ -5,11 +5,9 @@ Only the essentials are retained so you can point to a model, a dataset, and an 
 
 import argparse
 import os
-from collections.abc import Iterable, Mapping
-from typing import Any
 
 import torch
-from datasets import Dataset, load_dataset
+from datasets import load_dataset
 from peft import LoraConfig, prepare_model_for_kbit_training
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
@@ -25,54 +23,6 @@ def parse_args():
     parser.add_argument("--learning-rate", type=float, default=2e-4, help="AdamW learning rate.")
     parser.add_argument("--epochs", type=float, default=3.0, help="Number of training epochs.")
     return parser.parse_args()
-
-
-def infer_response_template(tokenizer: AutoTokenizer, dataset: Dataset) -> str | None:
-    def first_assistant_example(rows: Iterable[Mapping[str, Any]]) -> Mapping[str, Any] | None:
-        for row in rows:
-            messages = row.get("messages")
-            if not isinstance(messages, list):
-                continue
-            if any(isinstance(msg, Mapping) and msg.get("role") == "assistant" and isinstance(msg.get("content"), str) for msg in messages):
-                return row
-        return None
-
-    example = first_assistant_example(dataset)
-    if example is None:
-        return None
-
-    messages = example["messages"]
-    assistant_idx = None
-    for idx in reversed(range(len(messages))):
-        message = messages[idx]
-        if isinstance(message, Mapping) and message.get("role") == "assistant" and isinstance(message.get("content"), str):
-            assistant_idx = idx
-            break
-    if assistant_idx is None:
-        return None
-
-    assistant_message = messages[assistant_idx]
-    prior_messages = messages[:assistant_idx]
-    try:
-        rendered_prior = (
-            tokenizer.apply_chat_template(prior_messages, tokenize=False, add_generation_prompt=False)
-            if prior_messages
-            else ""
-        )
-        rendered_with_assistant = tokenizer.apply_chat_template(
-            messages[: assistant_idx + 1], tokenize=False, add_generation_prompt=False
-        )
-    except Exception:
-        return None
-
-    remainder = rendered_with_assistant[len(rendered_prior) :]
-    content = assistant_message["content"]
-    pivot = remainder.find(content)
-    if pivot == -1:
-        return None
-
-    template = remainder[:pivot]
-    return template or None
 
 
 def main() -> None:
@@ -120,10 +70,6 @@ def main() -> None:
     )
 
     dataset = load_dataset("json", data_files=args.dataset_path, split="train")
-    response_template = infer_response_template(tokenizer, dataset)
-    if response_template:
-        printable = response_template.replace("\n", "\\n")
-        print(f"[train_qlora] Detected response template: {printable!r}")
 
     training_args = SFTConfig(
         output_dir=args.output_dir,
@@ -146,7 +92,6 @@ def main() -> None:
         peft_config=peft_config,
         train_dataset=dataset,
         processing_class=tokenizer,
-        response_template=response_template,
     )
 
     trainer.train()
