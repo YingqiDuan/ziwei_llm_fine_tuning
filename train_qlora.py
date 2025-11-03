@@ -29,11 +29,29 @@ def main() -> None:
     args = parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        args.model_name,
-        use_fast=False,
-        trust_remote_code=True,
-    )
+    assistant_only_loss = True
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.model_name,
+            use_fast=True,
+            trust_remote_code=True,
+        )
+    except Exception as fast_tokenizer_error:  # pragma: no cover - informative fallback
+        print(
+            "[train_qlora] Fast tokenizer unavailable; falling back to Python tokenizer.\n"
+            f"  Original error: {fast_tokenizer_error}"
+        )
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.model_name,
+            use_fast=False,
+            trust_remote_code=True,
+        )
+        if assistant_only_loss and not getattr(tokenizer, "is_fast", False):
+            print(
+                "[train_qlora] Disabling assistant-only loss because the Python tokenizer "
+                "doesn't expose char-to-token mappings."
+            )
+            assistant_only_loss = False
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
@@ -106,7 +124,7 @@ def main() -> None:
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.learning_rate,
         num_train_epochs=args.epochs,
-        assistant_only_loss=True,
+        assistant_only_loss=assistant_only_loss,
         logging_steps=10,
         save_strategy="no",
         eval_strategy="no",
