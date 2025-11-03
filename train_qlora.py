@@ -144,6 +144,19 @@ def main() -> None:
         processing_class=tokenizer,
     )
 
+    sample_batch = next(iter(trainer.get_train_dataloader()))
+    labels = sample_batch["labels"]
+    valid_mask = labels != -100
+    per_sample_valid = valid_mask.sum(dim=1)
+    print(
+        "[train_qlora] Assistant-token counts per sample in first batch:",
+        per_sample_valid.tolist(),
+    )
+    print(
+        "[train_qlora] Mean assistant tokens this batch:",
+        per_sample_valid.float().mean().item(),
+    )
+
     trainer.train()
     trainer.model.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
