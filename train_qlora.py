@@ -132,7 +132,6 @@ def main() -> None:
         learning_rate=args.learning_rate,
         num_train_epochs=args.epochs,
         assistant_only_loss=True,
-        response_template=response_template,
         logging_steps=10,
         save_strategy="no",
         eval_strategy="no",
@@ -147,6 +146,7 @@ def main() -> None:
         peft_config=peft_config,
         train_dataset=dataset,
         processing_class=tokenizer,
+        response_template=response_template,
     )
 
     trainer.train()
