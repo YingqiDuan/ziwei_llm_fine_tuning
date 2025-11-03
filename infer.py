@@ -10,7 +10,7 @@ from pathlib import Path
 
 import torch
 from peft import PeftModel
-from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TextIteratorStreamer
 
 from prompts import DEFAULT_SYSTEM_PROMPT
 
@@ -36,6 +36,22 @@ def parse_args():
     parser.add_argument("--max-new-tokens", type=int, default=512, help="Generation length.")
     parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature.")
     parser.add_argument("--top-p", type=float, default=0.9, help="Top-p nucleus sampling.")
+    parser.add_argument(
+        "--dtype",
+        default="auto",
+        choices=("auto", "float16", "float32", "bfloat16"),
+        help="Model dtype when not using 4-bit loading (auto = float16 on CUDA else float32).",
+    )
+    parser.add_argument(
+        "--load-4bit",
+        action="store_true",
+        help="Load the base model with 4-bit quantization (requires bitsandbytes).",
+    )
+    parser.add_argument(
+        "--device-map",
+        default="auto",
+        help='Device map passed to from_pretrained (e.g. "auto", "cuda", "cpu").',
+    )
     parser.add_argument(
         "--no-stream",
         action="store_true",
@@ -84,11 +100,37 @@ def main() -> None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
 
+    quant_config = None
+    if args.load_4bit:
+        quant_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.float16,
+        )
+
+    dtype_lookup: dict[str, torch.dtype] = {
+        "float16": torch.float16,
+        "float32": torch.float32,
+        "bfloat16": torch.bfloat16,
+    }
+    resolved_dtype = args.dtype
+    if resolved_dtype == "auto":
+        resolved_dtype = "float16" if torch.cuda.is_available() else "float32"
+    torch_dtype = None if args.load_4bit else dtype_lookup[resolved_dtype]
+
+    model_kwargs: dict[str, object] = {
+        "device_map": args.device_map,
+        "trust_remote_code": True,
+    }
+    if torch_dtype is not None:
+        model_kwargs["torch_dtype"] = torch_dtype
+    if quant_config is not None:
+        model_kwargs["quantization_config"] = quant_config
+
     model = AutoModelForCausalLM.from_pretrained(
         args.base_model,
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-        device_map="auto",
-        trust_remote_code=True,
+        **model_kwargs,
     )
     model = PeftModel.from_pretrained(model, args.adapter)
     model.eval()
