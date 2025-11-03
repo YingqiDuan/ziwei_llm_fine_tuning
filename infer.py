@@ -5,11 +5,12 @@ Supports inline, file-based, or interactive prompts.
 
 import argparse
 import sys
+import threading
 from pathlib import Path
 
 import torch
 from peft import PeftModel
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 
 from prompts import DEFAULT_SYSTEM_PROMPT
 
@@ -35,6 +36,11 @@ def parse_args():
     parser.add_argument("--max-new-tokens", type=int, default=512, help="Generation length.")
     parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature.")
     parser.add_argument("--top-p", type=float, default=0.9, help="Top-p nucleus sampling.")
+    parser.add_argument(
+        "--no-stream",
+        action="store_true",
+        help="Disable incremental printing; wait for the full completion instead.",
+    )
     return parser.parse_args()
 
 
@@ -90,18 +96,36 @@ def main() -> None:
     prompt = build_chat_prompt(args.system_prompt, user_prompt)
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
-    with torch.no_grad():
-        output_ids = model.generate(
-            **inputs,
-            max_new_tokens=args.max_new_tokens,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            do_sample=True,
-        )
+    generation_kwargs = {
+        "input_ids": inputs["input_ids"],
+        "max_new_tokens": args.max_new_tokens,
+        "temperature": args.temperature,
+        "top_p": args.top_p,
+        "do_sample": True,
+    }
+    attention_mask = inputs.get("attention_mask")
+    if attention_mask is not None:
+        generation_kwargs["attention_mask"] = attention_mask
 
-    generated_ids = output_ids[0][inputs["input_ids"].shape[-1] :]
-    completion = tokenizer.decode(generated_ids, skip_special_tokens=True)
-    print(completion.strip())
+    if args.no_stream:
+        with torch.no_grad():
+            output_ids = model.generate(**generation_kwargs)
+        generated_ids = output_ids[0][inputs["input_ids"].shape[-1] :]
+        completion = tokenizer.decode(generated_ids, skip_special_tokens=True)
+        print(completion.strip())
+        return
+
+    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+    generation_kwargs["streamer"] = streamer
+
+    worker = threading.Thread(target=model.generate, kwargs=generation_kwargs)
+    worker.start()
+    try:
+        for chunk in streamer:
+            print(chunk, end="", flush=True)
+    finally:
+        worker.join()
+        print()
 
 
 if __name__ == "__main__":
