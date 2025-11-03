@@ -50,12 +50,16 @@ python train_qlora.py \
   --model-name gpt-oss-20b \
   --dataset-path dataset/ziwei_answers_prompt_completion.jsonl \
   --output-dir outputs/gpt-oss-20b-qlora \
+  --max-seq-length 2048 \
+  --context-keep 256 \
   --batch-size 1 \
   --grad-accum 8 \
   --learning-rate 2e-4 \
   --epochs 3
 ```
 - Adjust `--model-name` to point to any compatible HF checkpoint (local or remote).
+- `--max-seq-length` chunks long prompt+completion pairs into segments (default 2048 tokens).
+- `--context-keep` retains that many tokens from the previous chunk as loss-masked context (default 256).
 - The script loads the base model in 4-bit precision and saves only the LoRA adapter plus tokenizer.
 
 ## 6. Run Inference With the Adapter

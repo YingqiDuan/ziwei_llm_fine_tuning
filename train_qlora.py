@@ -22,6 +22,18 @@ def parse_args():
     parser.add_argument("--grad-accum", type=int, default=8, help="Gradient accumulation steps.")
     parser.add_argument("--learning-rate", type=float, default=2e-4, help="AdamW learning rate.")
     parser.add_argument("--epochs", type=float, default=3.0, help="Number of training epochs.")
+    parser.add_argument(
+        "--max-seq-length",
+        type=int,
+        default=2048,
+        help="Maximum tokens per training sample after chunking.",
+    )
+    parser.add_argument(
+        "--context-keep",
+        type=int,
+        default=256,
+        help="Number of previous tokens to retain as context between chunks (masked from loss).",
+    )
     return parser.parse_args()
 
 
@@ -30,9 +42,9 @@ def main() -> None:
     os.makedirs(args.output_dir, exist_ok=True)
 
     tokenizer = AutoTokenizer.from_pretrained(
-            args.model_name,
-            use_fast=True,
-            trust_remote_code=True,
+        args.model_name,
+        use_fast=True,
+        trust_remote_code=True,
     )
 
     if tokenizer.pad_token is None:
@@ -77,31 +89,68 @@ def main() -> None:
     dataset = load_dataset("json", data_files=args.dataset_path, split="train")
 
     tokenizer_max_length = getattr(tokenizer, "model_max_length", None)
-    max_seq_length = int(tokenizer_max_length)
+    requested_max_seq_len = args.max_seq_length
+    if tokenizer_max_length is None or tokenizer_max_length <= 0:
+        max_seq_length = requested_max_seq_len
+    else:
+        max_seq_length = min(requested_max_seq_len, int(tokenizer_max_length))
 
-    def split_prompt_completion(example):
-        prompt_text = example.get("prompt", "").strip()
-        completion_text = example.get("completion", "").strip()
-        if not completion_text:
-            raise ValueError("Each example must include a completion.")
-        if not prompt_text:
-            raise ValueError("Each example must include a prompt.")
+    def split_prompt_completion(batch):
+        prompts = batch.get("prompt")
+        completions = batch.get("completion")
+        if prompts is None or completions is None:
+            raise ValueError("Dataset records must include prompt and completion fields.")
 
-        prompt_ids = tokenizer(prompt_text, add_special_tokens=False)["input_ids"]
-        completion_ids = tokenizer(completion_text, add_special_tokens=False)["input_ids"]
+        output_input_ids: list[list[int]] = []
+        output_attention: list[list[int]] = []
+        output_labels: list[list[int]] = []
 
-        input_ids = prompt_ids + completion_ids
-        labels = [-100] * len(prompt_ids) + completion_ids
+        for prompt_text, completion_text in zip(prompts, completions):
+            completion_text = (completion_text or "").strip()
+            if not completion_text:
+                continue
+            prompt_text = (prompt_text or "").strip()
 
-        if len(input_ids) > max_seq_length:
-            input_ids = input_ids[-max_seq_length:]
-            labels = labels[-max_seq_length:]
+            prompt_ids = tokenizer(prompt_text, add_special_tokens=False)["input_ids"]
+            completion_ids = tokenizer(completion_text, add_special_tokens=False)["input_ids"]
 
-        attention_mask = [1] * len(input_ids)
+            input_ids = prompt_ids + completion_ids
+            labels = [-100] * len(prompt_ids) + completion_ids
 
-        return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
+            start = 0
+            context_keep = max(0, min(args.context_keep, max_seq_length - 1))
+            while start < len(input_ids):
+                end = start + max_seq_length
+                chunk_ids = input_ids[start:end]
+                if not chunk_ids:
+                    break
 
-    dataset = dataset.map(split_prompt_completion, remove_columns=dataset.column_names)
+                chunk_labels = labels[start:end].copy()
+
+                # Mask preserved context tokens so they do not contribute to loss
+                if start > 0 and context_keep > 0:
+                    keep = min(context_keep, len(chunk_labels))
+                    for idx in range(keep):
+                        chunk_labels[idx] = -100
+
+                output_input_ids.append(chunk_ids)
+                output_attention.append([1] * len(chunk_ids))
+                output_labels.append(chunk_labels)
+
+                start = end - context_keep if context_keep > 0 else end
+
+        return {
+            "input_ids": output_input_ids,
+            "attention_mask": output_attention,
+            "labels": output_labels,
+        }
+
+    dataset = dataset.map(
+        split_prompt_completion,
+        remove_columns=dataset.column_names,
+        batched=True,
+        batch_size=1,
+    )
 
     training_args = SFTConfig(
         output_dir=args.output_dir,
