@@ -66,5 +66,6 @@ Use the inference script to apply the fine-tuned adapter alongside the base mode
 python infer.py \
   --base-model gpt-oss-20b \
   --adapter outputs/gpt-oss-20b-qlora \
-  --prompt "your chart"
+  --prompt-file prompt.txt \
+  --load-4bit 
 ```
