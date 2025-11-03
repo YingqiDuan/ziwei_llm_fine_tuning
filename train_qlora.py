@@ -85,6 +85,9 @@ def main() -> None:
             "{% endif %}"
         )
 
+    print("[train_qlora] Using chat template:")
+    print(tokenizer.chat_template or "[no chat template configured]")
+
     quant_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_use_double_quant=True,
