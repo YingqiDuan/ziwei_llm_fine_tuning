@@ -58,8 +58,8 @@ python train_qlora.py \
   --epochs 3
 ```
 - Adjust `--model-name` to point to any compatible HF checkpoint (local or remote).
-- `--max-seq-length` chunks long prompt+completion pairs into segments (default 2048 tokens).
-- `--context-keep` retains that many tokens from the previous chunk as loss-masked context (default 256).
+- `--max-seq-length` controls chunk size; each chunk repeats the full prompt and fits within this length (default 2048 tokens).
+- `--context-keep` retains that many completion tokens from the previous chunk as loss-masked context (default 256).
 - The script loads the base model in 4-bit precision and saves only the LoRA adapter plus tokenizer.
 
 ## 6. Run Inference With the Adapter

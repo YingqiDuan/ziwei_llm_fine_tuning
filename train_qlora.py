@@ -114,30 +114,51 @@ def main() -> None:
             prompt_ids = tokenizer(prompt_text, add_special_tokens=False)["input_ids"]
             completion_ids = tokenizer(completion_text, add_special_tokens=False)["input_ids"]
 
-            input_ids = prompt_ids + completion_ids
-            labels = [-100] * len(prompt_ids) + completion_ids
+            prompt_len = len(prompt_ids)
+            if prompt_len >= max_seq_length:
+                raise ValueError(
+                    "Prompt length exceeds or equals max-seq-length; cannot include completion tokens."
+                )
 
-            start = 0
-            context_keep = max(0, min(args.context_keep, max_seq_length - 1))
-            while start < len(input_ids):
-                end = start + max_seq_length
-                chunk_ids = input_ids[start:end]
-                if not chunk_ids:
+            chunk_capacity = max_seq_length - prompt_len
+            prompt_label_prefix = [-100] * prompt_len
+
+            completion_start = 0
+            total_completion = len(completion_ids)
+            while completion_start < total_completion:
+                ctx_len = min(args.context_keep, completion_start)
+                if ctx_len >= chunk_capacity:
+                    ctx_len = max(0, chunk_capacity - 1)
+
+                new_len_available = chunk_capacity - ctx_len
+                if new_len_available <= 0:
+                    # No room left for new tokens; force at least one token by reducing context.
+                    ctx_len = 0
+                    new_len_available = chunk_capacity
+                    if new_len_available <= 0:
+                        break
+
+                new_len = min(new_len_available, total_completion - completion_start)
+                if new_len <= 0:
                     break
 
-                chunk_labels = labels[start:end].copy()
+                overlap_start = completion_start - ctx_len
+                new_end = completion_start + new_len
 
-                # Mask preserved context tokens so they do not contribute to loss
-                if start > 0 and context_keep > 0:
-                    keep = min(context_keep, len(chunk_labels))
-                    for idx in range(keep):
-                        chunk_labels[idx] = -100
+                chunk_completion_ids = completion_ids[overlap_start:new_end]
 
-                output_input_ids.append(chunk_ids)
-                output_attention.append([1] * len(chunk_ids))
+                chunk_input_ids = prompt_ids + chunk_completion_ids
+                chunk_attention = [1] * len(chunk_input_ids)
+
+                chunk_labels = prompt_label_prefix.copy()
+                chunk_labels.extend([-100] * ctx_len)
+                chunk_labels.extend(completion_ids[completion_start:new_end])
+
+                output_input_ids.append(chunk_input_ids)
+                output_attention.append(chunk_attention)
                 output_labels.append(chunk_labels)
 
-                start = end - context_keep if context_keep > 0 else end
+                completion_start = new_end
 
         return {
             "input_ids": output_input_ids,
