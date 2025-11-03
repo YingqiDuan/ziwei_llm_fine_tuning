@@ -9,13 +9,8 @@ import os
 import torch
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    BitsAndBytesConfig,
-    Trainer,
-    TrainingArguments,
-)
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, Trainer
+from trl import SFTConfig
 
 
 def parse_args():
@@ -137,6 +132,8 @@ def main() -> None:
             attention_mask += [0] * pad_len
 
         return {
+            "prompt": prompt_text,
+            "completion": completion_text,
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "labels": labels,
@@ -144,7 +141,7 @@ def main() -> None:
 
     dataset = dataset.map(split_prompt_completion, remove_columns=dataset.column_names)
 
-    training_args = TrainingArguments(
+    training_args = SFTConfig(
         output_dir=args.output_dir,
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
@@ -152,7 +149,7 @@ def main() -> None:
         num_train_epochs=args.epochs,
         logging_steps=10,
         save_strategy="no",
-        evaluation_strategy="no",
+        eval_strategy="no",
         report_to="none",
         fp16=True,
         bf16=False,
