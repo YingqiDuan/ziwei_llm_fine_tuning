@@ -131,7 +131,7 @@ def main() -> None:
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.learning_rate,
         num_train_epochs=args.epochs,
-        train_on_inputs=False,
+        assistant_only_loss=True,
         response_template=response_template,
         logging_steps=10,
         save_strategy="no",
