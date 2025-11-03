@@ -91,7 +91,6 @@ def main() -> None:
     if (
         tokenizer_max_length is None
         or tokenizer_max_length <= 0
-        or tokenizer_max_length > 65536
     ):
         max_seq_length = 4096
     else:
