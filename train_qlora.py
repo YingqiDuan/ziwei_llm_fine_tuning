@@ -29,22 +29,12 @@ def main() -> None:
     args = parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
 
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(
             args.model_name,
             use_fast=True,
             trust_remote_code=True,
-        )
-    except Exception as fast_tokenizer_error:  # pragma: no cover - informative fallback
-        print(
-            "[train_qlora] Fast tokenizer unavailable; falling back to Python tokenizer.\n"
-            f"  Original error: {fast_tokenizer_error}"
-        )
-        tokenizer = AutoTokenizer.from_pretrained(
-            args.model_name,
-            use_fast=False,
-            trust_remote_code=True,
-        )
+    )
+
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
@@ -87,23 +77,15 @@ def main() -> None:
     dataset = load_dataset("json", data_files=args.dataset_path, split="train")
 
     tokenizer_max_length = getattr(tokenizer, "model_max_length", None)
-    if (
-        tokenizer_max_length is None
-        or tokenizer_max_length <= 0
-    ):
-        max_seq_length = 4096
-    else:
-        max_seq_length = int(tokenizer_max_length)
+    max_seq_length = int(tokenizer_max_length)
 
     def split_prompt_completion(example):
-        prompt_text = example.get("prompt")
-        completion_text = example.get("completion")
-        if completion_text is None:
+        prompt_text = example.get("prompt", "").strip()
+        completion_text = example.get("completion", "").strip()
+        if not completion_text:
             raise ValueError("Each example must include a completion.")
-        if prompt_text is None:
-            prompt_text = ""
-        prompt_text = prompt_text.strip()
-        completion_text = completion_text.strip()
+        if not prompt_text:
+            raise ValueError("Each example must include a prompt.")
 
         prompt_ids = tokenizer(prompt_text, add_special_tokens=False)["input_ids"]
         completion_ids = tokenizer(completion_text, add_special_tokens=False)["input_ids"]
