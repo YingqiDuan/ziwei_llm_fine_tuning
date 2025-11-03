@@ -8,9 +8,14 @@ import os
 
 import torch
 from datasets import load_dataset
-from peft import LoraConfig, prepare_model_for_kbit_training
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-from trl import DataCollatorForCompletionOnlyLM, SFTConfig, SFTTrainer
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    Trainer,
+    TrainingArguments,
+)
 
 
 def parse_args():
@@ -83,48 +88,81 @@ def main() -> None:
         ],
     )
 
+    model = get_peft_model(model, peft_config)
+
     dataset = load_dataset("json", data_files=args.dataset_path, split="train")
 
-    def to_text(example):
+    tokenizer_max_length = getattr(tokenizer, "model_max_length", None)
+    if (
+        tokenizer_max_length is None
+        or tokenizer_max_length <= 0
+        or tokenizer_max_length > 65536
+    ):
+        max_seq_length = 4096
+    else:
+        max_seq_length = int(tokenizer_max_length)
+
+    def split_prompt_completion(example):
+        messages = example["messages"]
+        if not messages:
+            raise ValueError("Expected at least one message per example.")
+        if messages[-1]["role"] != "assistant":
+            raise ValueError("Last message must be from the assistant for training.")
+
+        prompt_chunks = []
+        for message in messages[:-1]:
+            if message["role"] in {"system", "user"}:
+                prompt_chunks.append(f"{message['role'].upper()}:\n{message['content']}\n")
+        prompt_text = "\n".join(prompt_chunks).strip()
+        if prompt_text:
+            prompt_text += "\n\n"
+        completion_text = messages[-1]["content"]
+
+        prompt_ids = tokenizer(prompt_text, add_special_tokens=False)["input_ids"]
+        completion_ids = tokenizer(completion_text, add_special_tokens=False)["input_ids"]
+
+        input_ids = prompt_ids + completion_ids
+        labels = [-100] * len(prompt_ids) + completion_ids
+
+        if len(input_ids) > max_seq_length:
+            trim = len(input_ids) - max_seq_length
+            input_ids = input_ids[trim:]
+            labels = labels[trim:]
+
+        attention_mask = [1] * len(input_ids)
+        pad_len = max_seq_length - len(input_ids)
+        if pad_len > 0:
+            input_ids += [tokenizer.pad_token_id] * pad_len
+            labels += [-100] * pad_len
+            attention_mask += [0] * pad_len
+
         return {
-            "text": tokenizer.apply_chat_template(
-                example["messages"],
-                tokenize=False,
-                add_generation_prompt=False,
-            )
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
         }
 
-    dataset = dataset.map(to_text, remove_columns=dataset.column_names)
+    dataset = dataset.map(split_prompt_completion, remove_columns=dataset.column_names)
 
-    RESPONSE_TEMPLATE = "<|im_start|>assistant\n"
-    data_collator = DataCollatorForCompletionOnlyLM(
-        tokenizer=tokenizer,
-        response_template=RESPONSE_TEMPLATE,
-    )
-
-    training_args = SFTConfig(
+    training_args = TrainingArguments(
         output_dir=args.output_dir,
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.learning_rate,
         num_train_epochs=args.epochs,
-        assistant_only_loss=False,
         logging_steps=10,
         save_strategy="no",
-        eval_strategy="no",
+        evaluation_strategy="no",
         report_to="none",
         fp16=True,
         bf16=False,
     )
 
-    trainer = SFTTrainer(
+    trainer = Trainer(
         model=model,
         args=training_args,
-        peft_config=peft_config,
         train_dataset=dataset,
-        processing_class=tokenizer,
-        dataset_text_field="text",
-        data_collator=data_collator,
+        tokenizer=tokenizer,
     )
 
     sample_batch = next(iter(trainer.get_train_dataloader()))
