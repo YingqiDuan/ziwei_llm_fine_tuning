@@ -52,6 +52,7 @@ python train_qlora.py \
   --output-dir outputs/gpt-oss-20b-qlora \
   --max-seq-length 2048 \
   --context-keep 256 \
+  --attn-implementation flash_attention_2 \
   --batch-size 1 \
   --grad-accum 8 \
   --learning-rate 2e-4 \
@@ -60,7 +61,8 @@ python train_qlora.py \
 - Adjust `--model-name` to point to any compatible HF checkpoint (local or remote).
 - `--max-seq-length` controls chunk size; each chunk repeats the full prompt and fits within this length (default 2048 tokens).
 - `--context-keep` retains that many completion tokens from the previous chunk as loss-masked context (default 256).
-- The script loads the base model in 4-bit precision and saves only the LoRA adapter plus tokenizer.
+- `--attn-implementation` defaults to `flash_attention_2`; switch to `sdpa`/`eager` if FlashAttention is unavailable on your setup.
+- The trainer uses the `paged_adamw_8bit` optimizer, loads the base model in 4-bit precision, and saves only the LoRA adapter plus tokenizer.
 
 ## 6. Run Inference With the Adapter
 Use the inference script to apply the fine-tuned adapter alongside the base model.

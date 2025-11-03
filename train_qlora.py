@@ -34,6 +34,11 @@ def parse_args():
         default=256,
         help="Number of previous tokens to retain as context between chunks (masked from loss).",
     )
+    parser.add_argument(
+        "--attn-implementation",
+        default="flash_attention_2",
+        help="Attention backend passed to from_pretrained (e.g. flash_attention_2, sdpa, eager).",
+    )
     return parser.parse_args()
 
 
@@ -58,11 +63,35 @@ def main() -> None:
         bnb_4bit_compute_dtype=torch.float16,
     )
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_name,
-        device_map="auto",
-        quantization_config=quant_config,
-    )
+    model_kwargs: dict[str, object] = {
+        "device_map": "auto",
+        "quantization_config": quant_config,
+    }
+    if args.attn_implementation:
+        model_kwargs["attn_implementation"] = args.attn_implementation
+
+    try:
+        model = AutoModelForCausalLM.from_pretrained(args.model_name, **model_kwargs)
+    except TypeError as exc:
+        if "attn_implementation" in str(exc) and "unexpected keyword argument" in str(exc):
+            print(
+                "[train_qlora] attn_implementation unsupported by this model class; "
+                "falling back to default attention.",
+            )
+            model_kwargs.pop("attn_implementation", None)
+            model = AutoModelForCausalLM.from_pretrained(args.model_name, **model_kwargs)
+        else:
+            raise
+    except ValueError as exc:
+        if args.attn_implementation and "flash" in args.attn_implementation.lower():
+            print(
+                "[train_qlora] Flash attention unavailable for this model; reverting to default.",
+            )
+            model_kwargs.pop("attn_implementation", None)
+            model = AutoModelForCausalLM.from_pretrained(args.model_name, **model_kwargs)
+        else:
+            raise
+
     model = prepare_model_for_kbit_training(model)
 
     peft_config = LoraConfig(
