@@ -186,6 +186,7 @@ def main() -> None:
         fp16=True,
         bf16=False,
         gradient_checkpointing=True,
+        optim="paged_adamw_8bit",
     )
 
     trainer = Trainer(
