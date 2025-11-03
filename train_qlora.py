@@ -10,7 +10,7 @@ import torch
 from datasets import load_dataset
 from peft import LoraConfig, prepare_model_for_kbit_training
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-from trl import SFTConfig, SFTTrainer
+from trl import DataCollatorForCompletionOnlyLM, SFTConfig, SFTTrainer
 
 
 def parse_args():
@@ -29,7 +29,6 @@ def main() -> None:
     args = parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
 
-    assistant_only_loss = True
     try:
         tokenizer = AutoTokenizer.from_pretrained(
             args.model_name,
@@ -46,44 +45,9 @@ def main() -> None:
             use_fast=False,
             trust_remote_code=True,
         )
-        if assistant_only_loss and not getattr(tokenizer, "is_fast", False):
-            print(
-                "[train_qlora] Disabling assistant-only loss because the Python tokenizer "
-                "doesn't expose char-to-token mappings."
-            )
-            assistant_only_loss = False
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
-
-    # TRL's assistant-only masking requires the chat template to include the
-    # `{% generation %}` marker. Older Qwen releases omit it, so we patch in a
-    # minimal template compatible with the model's conversation format.
-    needs_generation_marker = "{% generation %}" not in (tokenizer.chat_template or "")
-    if needs_generation_marker and "qwen" in args.model_name.lower():
-        tokenizer.chat_template = (
-            "{{ bos_token or '' }}\n"
-            "{% for message in messages %}\n"
-            "{% if message['role'] == 'system' %}"
-            "{{ '<|im_start|>system\\n' + message['content'] + '<|im_end|>\\n' }}"
-            "{% elif message['role'] == 'user' %}"
-            "{{ '<|im_start|>user\\n' + message['content'] + '<|im_end|>\\n' }}"
-            "{% elif message['role'] == 'assistant' %}"
-            "{% generation %}"
-            "{{ '<|im_start|>assistant\\n' + message['content'] + '<|im_end|>\\n' }}"
-            "{% endgeneration %}"
-            "{% elif message['role'] == 'tool' %}"
-            "{{ '<|im_start|>tool\\n' + message['content'] + '<|im_end|>\\n' }}"
-            "{% else %}"
-            "{{ '<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>\\n' }}"
-            "{% endif %}\n"
-            "{% endfor %}"
-            "{% if add_generation_prompt %}\n"
-            "{% generation %}\n"
-            "{{ '<|im_start|>assistant\\n' }}\n"
-            "{% endgeneration %}"
-            "{% endif %}"
-        )
 
     print("[train_qlora] Using chat template:")
     print(tokenizer.chat_template or "[no chat template configured]")
@@ -121,13 +85,30 @@ def main() -> None:
 
     dataset = load_dataset("json", data_files=args.dataset_path, split="train")
 
+    def to_text(example):
+        return {
+            "text": tokenizer.apply_chat_template(
+                example["messages"],
+                tokenize=False,
+                add_generation_prompt=False,
+            )
+        }
+
+    dataset = dataset.map(to_text, remove_columns=dataset.column_names)
+
+    RESPONSE_TEMPLATE = "<|im_start|>assistant\n"
+    data_collator = DataCollatorForCompletionOnlyLM(
+        tokenizer=tokenizer,
+        response_template=RESPONSE_TEMPLATE,
+    )
+
     training_args = SFTConfig(
         output_dir=args.output_dir,
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.learning_rate,
         num_train_epochs=args.epochs,
-        assistant_only_loss=assistant_only_loss,
+        assistant_only_loss=False,
         logging_steps=10,
         save_strategy="no",
         eval_strategy="no",
@@ -142,6 +123,8 @@ def main() -> None:
         peft_config=peft_config,
         train_dataset=dataset,
         processing_class=tokenizer,
+        dataset_text_field="text",
+        data_collator=data_collator,
     )
 
     sample_batch = next(iter(trainer.get_train_dataloader()))
