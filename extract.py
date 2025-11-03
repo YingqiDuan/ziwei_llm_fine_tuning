@@ -7,6 +7,8 @@ import argparse
 import json
 from pathlib import Path
 
+from prompts import DEFAULT_SYSTEM_PROMPT
+
 
 def parse_args():
     parser = argparse.ArgumentParser("Convert prompt/completion pairs to Ollama chat JSONL.")
@@ -19,8 +21,8 @@ def parse_args():
     parser.add_argument(
         "--system-prompt",
         type=str,
-        default=None,
-        help="Override system prompt for every conversation.",
+        default=DEFAULT_SYSTEM_PROMPT,
+        help="Override system prompt for every conversation (defaults to shared Grok prompt).",
     )
     return parser.parse_args()
 

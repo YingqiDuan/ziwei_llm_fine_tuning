@@ -43,7 +43,7 @@ python extract.py \
   --output dataset/ziwei_ollama_train.jsonl \
 ```
 - If `--output` is omitted, the script writes to `<input>_ollama.jsonl`.
-- Provide a global `--system-prompt` or leave it out to emit only user/assistant turns.
+- `--system-prompt` defaults to统一的紫微顾问提示，可按需覆盖。
 
 ## 5. Fine-Tune With QLoRA
 Run minimal supervised fine-tuning against the generated chat data.
@@ -66,8 +66,9 @@ Use the inference script to apply the fine-tuned adapter alongside the base mode
 python infer.py \
   --base-model gpt-oss-20b \
   --adapter outputs/gpt-oss-20b-qlora \
-  --prompt "your chart"
+  --prompt "简要分析今天的运势。"
 ```
 - Optional flags:
-  - `--system-prompt` 
+  - `--system-prompt`（默认即为统一的紫微顾问提示）
+  - `--prompt-file` 从文件读取长提示；如果省略 `--prompt`，脚本会提示交互输入（空行结束）
   - `--max-new-tokens`, `--temperature`, `--top-p` for decoding tweaks.

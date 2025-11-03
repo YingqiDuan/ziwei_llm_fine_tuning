@@ -13,11 +13,10 @@ import urllib.request
 import certifi
 from dotenv import load_dotenv
 
+from prompts import DEFAULT_SYSTEM_PROMPT
+
 API_URL = "https://api.x.ai/v1/chat/completions"
 DEFAULT_MODEL = "grok-4-fast"
-DEFAULT_SYSTEM_PROMPT = (
-    "你现在是资深的国学易经术数领域专家，请详细分析下面这个紫微斗数命盘，综合使用三合紫微、飞星紫微、钦天四化等各流派紫微斗数的分析技法，对命盘十二宫星曜分布和各宫位间的飞宫四化进行细致分析，进而对命主的健康、学业、事业、财运、人际关系、婚姻和感情等各个方面进行全面分析和总结。"
-)
 DEFAULT_SLEEP = 0.5
 _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
