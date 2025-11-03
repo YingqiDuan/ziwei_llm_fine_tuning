@@ -84,6 +84,8 @@ def main() -> None:
     )
 
     model = get_peft_model(model, peft_config)
+    model.config.use_cache = False
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
 
     dataset = load_dataset("json", data_files=args.dataset_path, split="train")
 
@@ -119,16 +121,10 @@ def main() -> None:
         labels = [-100] * len(prompt_ids) + completion_ids
 
         if len(input_ids) > max_seq_length:
-            trim = len(input_ids) - max_seq_length
-            input_ids = input_ids[trim:]
-            labels = labels[trim:]
+            input_ids = input_ids[-max_seq_length:]
+            labels = labels[-max_seq_length:]
 
         attention_mask = [1] * len(input_ids)
-        pad_len = max_seq_length - len(input_ids)
-        if pad_len > 0:
-            input_ids += [tokenizer.pad_token_id] * pad_len
-            labels += [-100] * pad_len
-            attention_mask += [0] * pad_len
 
         return {
             "prompt": prompt_text,
@@ -152,6 +148,7 @@ def main() -> None:
         report_to="none",
         fp16=True,
         bf16=False,
+        gradient_checkpointing=True,
     )
 
     trainer = Trainer(
