@@ -12,8 +12,6 @@ import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TextIteratorStreamer
 
-from prompts import DEFAULT_SYSTEM_PROMPT
-
 
 def parse_args():
     parser = argparse.ArgumentParser("Run a quick completion with the fine-tuned adapter.")
@@ -30,8 +28,7 @@ def parse_args():
     )
     parser.add_argument(
         "--system-prompt",
-        default=DEFAULT_SYSTEM_PROMPT,
-        help="System prompt prepended to the user prompt (defaults to shared Grok prompt).",
+        help="Optional system prompt to prepend to the user prompt.",
     )
     parser.add_argument("--max-new-tokens", type=int, default=512, help="Generation length.")
     parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature.")
@@ -60,7 +57,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def build_prompt(system_prompt: str, user_prompt: str) -> str:
+def build_prompt(system_prompt: str | None, user_prompt: str) -> str:
     parts = []
     if system_prompt:
         parts.append(system_prompt.strip())
