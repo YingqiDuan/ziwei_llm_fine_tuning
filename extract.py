@@ -7,6 +7,8 @@ import argparse
 import json
 from pathlib import Path
 
+from prompts import DEFAULT_SYSTEM_PROMPT
+
 
 def parse_args():
     parser = argparse.ArgumentParser("Normalize prompt/completion pairs for fine-tuning.")
@@ -19,10 +21,10 @@ def parse_args():
     parser.add_argument(
         "--system-prompt",
         type=str,
+        default=DEFAULT_SYSTEM_PROMPT,
         help=(
-            "Optional system prompt to prepend to each prompt. "
-            "Record-level system prompts take precedence when present; "
-            "no system prompt is added when omitted."
+            "Override system prompt to prepend to each prompt. "
+            "Record-level system prompts take precedence when present."
         ),
     )
     return parser.parse_args()
