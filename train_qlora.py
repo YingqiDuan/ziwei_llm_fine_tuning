@@ -9,7 +9,14 @@ import os
 import torch
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, Trainer
+from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    Trainer,
+    Mxfp4Config,
+)
 from trl import SFTConfig
 
 
@@ -42,6 +49,83 @@ def parse_args():
     return parser.parse_args()
 
 
+def attempt_model_load(model_name: str, load_kwargs: dict) -> "AutoModelForCausalLM":
+    try:
+        return AutoModelForCausalLM.from_pretrained(model_name, **load_kwargs)
+    except TypeError as exc:
+        if load_kwargs.get("attn_implementation") and "unexpected keyword argument" in str(exc):
+            print(
+                "[train_qlora] attn_implementation unsupported by this model class; falling back to default.",
+            )
+            fallback = dict(load_kwargs)
+            fallback.pop("attn_implementation", None)
+            return AutoModelForCausalLM.from_pretrained(model_name, **fallback)
+        raise
+    except ValueError as exc:
+        attn_impl = load_kwargs.get("attn_implementation")
+        if attn_impl and "flash" in attn_impl.lower():
+            print(
+                "[train_qlora] Flash attention unavailable for this model; reverting to default attention backend.",
+            )
+            fallback = dict(load_kwargs)
+            fallback.pop("attn_implementation", None)
+            return AutoModelForCausalLM.from_pretrained(model_name, **fallback)
+        raise
+
+
+def is_mxfp4_quantized(model_name: str) -> bool:
+    try:
+        config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+    except Exception as exc:
+        print(f"[train_qlora] Warning: failed to inspect config for {model_name}: {exc}")
+        return False
+
+    quant_cfg = getattr(config, "quantization_config", None)
+
+    if isinstance(quant_cfg, dict):
+        quant_method = quant_cfg.get("quant_method") or quant_cfg.get("quantization_method")
+        return isinstance(quant_method, str) and quant_method.lower() == "mxfp4"
+
+    return False
+
+
+def load_mxfp4_model_as_nf4(
+    model_name: str,
+    quant_config: BitsAndBytesConfig,
+    attn_implementation: str | None,
+) -> "AutoModelForCausalLM":
+    # Stage 1: dequantize MXFP4 weights to BF16 on CPU.
+    dequant_kwargs = {
+        "device_map": "cpu",
+        "quantization_config": Mxfp4Config(dequantize=True),
+        "torch_dtype": torch.bfloat16,
+        "trust_remote_code": True,
+    }
+    if attn_implementation:
+        dequant_kwargs["attn_implementation"] = attn_implementation
+
+    base_model = attempt_model_load(model_name, dequant_kwargs)
+    state_dict = {name: param.detach().cpu() for name, param in base_model.state_dict().items()}
+    del base_model
+    torch.cuda.empty_cache()
+
+    # Stage 2: reload using BitsAndBytes 4-bit quantization.
+    reload_kwargs = {
+        "device_map": "auto",
+        "quantization_config": quant_config,
+        "trust_remote_code": True,
+        "low_cpu_mem_usage": False,
+    }
+    if attn_implementation:
+        reload_kwargs["attn_implementation"] = attn_implementation
+
+    model = attempt_model_load(model_name, {**reload_kwargs, "state_dict": state_dict})
+    state_dict.clear()
+    torch.cuda.empty_cache()
+
+    return model
+
+
 def main() -> None:
     args = parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
@@ -63,34 +147,20 @@ def main() -> None:
         bnb_4bit_compute_dtype=torch.float16,
     )
 
-    model_kwargs: dict[str, object] = {
-        "device_map": "auto",
-        "quantization_config": quant_config,
-    }
-    if args.attn_implementation:
-        model_kwargs["attn_implementation"] = args.attn_implementation
-
-    try:
-        model = AutoModelForCausalLM.from_pretrained(args.model_name, **model_kwargs)
-    except TypeError as exc:
-        if "attn_implementation" in str(exc) and "unexpected keyword argument" in str(exc):
-            print(
-                "[train_qlora] attn_implementation unsupported by this model class; "
-                "falling back to default attention.",
-            )
-            model_kwargs.pop("attn_implementation", None)
-            model = AutoModelForCausalLM.from_pretrained(args.model_name, **model_kwargs)
-        else:
-            raise
-    except ValueError as exc:
-        if args.attn_implementation and "flash" in args.attn_implementation.lower():
-            print(
-                "[train_qlora] Flash attention unavailable for this model; reverting to default.",
-            )
-            model_kwargs.pop("attn_implementation", None)
-            model = AutoModelForCausalLM.from_pretrained(args.model_name, **model_kwargs)
-        else:
-            raise
+    if is_mxfp4_quantized(args.model_name):
+        print(
+            "[train_qlora] Detected MXFP4 checkpoint; dequantizing to BF16 then re-quantizing to NF4 for QLoRA.",
+        )
+        model = load_mxfp4_model_as_nf4(args.model_name, quant_config, args.attn_implementation)
+    else:
+        model_kwargs: dict[str, object] = {
+            "device_map": "auto",
+            "quantization_config": quant_config,
+            "trust_remote_code": True,
+        }
+        if args.attn_implementation:
+            model_kwargs["attn_implementation"] = args.attn_implementation
+        model = attempt_model_load(args.model_name, model_kwargs)
 
     model = prepare_model_for_kbit_training(model)
 
