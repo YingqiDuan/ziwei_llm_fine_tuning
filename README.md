@@ -64,6 +64,7 @@ python .\convert_mxfp4_to_nf4.py `
   WSL only uses swap after hitting the `memory` ceiling, so choose a value close to but below your physical RAM (e.g. 60 GB on a 64 GB host).
 - Use `--overwrite` when re-running the conversion into the same directory.
 - Point the `train_qlora.py --model-name` argument to the NF4 directory you just produced (e.g. `models/gpt-oss-20b-nf4`).
+- Shortcut: if you cannot covert, skip this step entirely and load `mdouglas/gpt-oss-20b-bnb-nf4` (or any other NF4-ready repo) directly via `--model-name`.
 
 ## 6. Fine-Tune With QLoRA
 Run minimal supervised fine-tuning against the flattened prompt/completion data.
