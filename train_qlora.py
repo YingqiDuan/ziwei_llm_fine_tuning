@@ -105,7 +105,7 @@ def load_mxfp4_model_as_nf4(
         dequant_kwargs["attn_implementation"] = attn_implementation
 
     base_model = attempt_model_load(model_name, dequant_kwargs)
-    state_dict = base_model.state_dict()
+    state_dict = {name: param.detach().cpu() for name, param in base_model.state_dict().items()}
     del base_model
     torch.cuda.empty_cache()
 
@@ -114,7 +114,7 @@ def load_mxfp4_model_as_nf4(
         "device_map": "auto",
         "quantization_config": quant_config,
         "trust_remote_code": True,
-        "low_cpu_mem_usage": True,
+        "low_cpu_mem_usage": False,
     }
     if attn_implementation:
         reload_kwargs["attn_implementation"] = attn_implementation
