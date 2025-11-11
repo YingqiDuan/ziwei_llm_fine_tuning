@@ -16,8 +16,8 @@ from transformers import (
     AutoTokenizer,
     BitsAndBytesConfig,
     Trainer,
-    Mxfp4Config,
 )
+from transformers.utils.quantization_config import Mxfp4Config
 from trl import SFTConfig
 
 
@@ -74,20 +74,54 @@ def attempt_model_load(model_name: str, load_kwargs: dict) -> "AutoModelForCausa
         raise
 
 
-def is_mxfp4_quantized(model_name: str) -> bool:
+def inspect_quantization_metadata(model_name: str) -> tuple[object | None, str | None]:
     try:
         config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
     except Exception as exc:
         print(f"[train_qlora] Warning: failed to inspect config for {model_name}: {exc}")
-        return False
+        return None, None
 
     quant_cfg = getattr(config, "quantization_config", None)
+    if quant_cfg is None:
+        return None, None
 
+    quant_dict: dict[str, object] | None = None
     if isinstance(quant_cfg, dict):
-        quant_method = quant_cfg.get("quant_method") or quant_cfg.get("quantization_method")
-        return isinstance(quant_method, str) and quant_method.lower() == "mxfp4"
+        quant_dict = quant_cfg
+    else:
+        to_dict = getattr(quant_cfg, "to_dict", None)
+        if callable(to_dict):
+            try:
+                maybe_dict = to_dict()
+                if isinstance(maybe_dict, dict):
+                    quant_dict = maybe_dict
+            except Exception:
+                pass
 
-    return False
+    quant_method: str | None = None
+    if quant_dict:
+        for key in (
+            "quant_method",
+            "quantization_method",
+            "quantization_type",
+            "quant_type",
+            "format",
+        ):
+            value = quant_dict.get(key)
+            if isinstance(value, str) and value.strip():
+                quant_method = value.strip().lower()
+                break
+        if quant_method is None:
+            bnb_quant = quant_dict.get("bnb_4bit_quant_type")
+            if isinstance(bnb_quant, str) and bnb_quant.strip():
+                quant_method = bnb_quant.strip().lower()
+    elif isinstance(quant_cfg, str):
+        quant_method = quant_cfg.strip().lower()
+    else:
+        class_name = quant_cfg.__class__.__name__.lower()
+        quant_method = "mxfp4" if "mxfp4" in class_name else class_name
+
+    return quant_dict if quant_dict is not None else quant_cfg, quant_method
 
 
 def load_mxfp4_model_as_nf4(
@@ -149,6 +183,7 @@ def main() -> None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
+    quant_metadata, quant_method = inspect_quantization_metadata(args.model_name)
     quant_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_use_double_quant=True,
@@ -156,7 +191,7 @@ def main() -> None:
         bnb_4bit_compute_dtype=torch.float16,
     )
 
-    if is_mxfp4_quantized(args.model_name):
+    if quant_method == "mxfp4":
         print(
             "[train_qlora] Detected MXFP4 checkpoint; dequantizing to BF16 then re-quantizing to NF4 for QLoRA.",
         )
@@ -166,6 +201,19 @@ def main() -> None:
             args.attn_implementation,
             args.output_dir,
         )
+    elif quant_metadata is not None:
+        detected_method = quant_method or "unknown quantization"
+        print(
+            f"[train_qlora] Checkpoint includes built-in quantization config ({detected_method});"
+            " loading weights as-is and skipping additional BitsAndBytes settings.",
+        )
+        model_kwargs = {
+            "device_map": "auto",
+            "trust_remote_code": True,
+        }
+        if args.attn_implementation:
+            model_kwargs["attn_implementation"] = args.attn_implementation
+        model = attempt_model_load(args.model_name, model_kwargs)
     else:
         model_kwargs: dict[str, object] = {
             "device_map": "auto",
@@ -179,8 +227,8 @@ def main() -> None:
     model = prepare_model_for_kbit_training(model)
 
     peft_config = LoraConfig(
-        r=64,
-        lora_alpha=16,
+        r=16,
+        lora_alpha=32,
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
@@ -189,9 +237,9 @@ def main() -> None:
             "k_proj",
             "v_proj",
             "o_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
+            # "gate_proj",
+            # "up_proj",
+            # "down_proj",
         ],
     )
 
