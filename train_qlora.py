@@ -124,30 +124,6 @@ def inspect_quantization_metadata(model_name: str) -> tuple[object | None, str |
     return quant_dict if quant_dict is not None else quant_cfg, quant_method
 
 
-def extract_target_parameters(quant_metadata: object | None) -> list[str]:
-    if quant_metadata is None:
-        return []
-
-    candidate_keys = (
-        "target_parameters",
-        "bnb_4bit_target_parameters",
-        "bnb_target_parameters",
-    )
-
-    if isinstance(quant_metadata, dict):
-        for key in candidate_keys:
-            value = quant_metadata.get(key)
-            if isinstance(value, list) and all(isinstance(item, str) for item in value):
-                return value  # type: ignore[return-value]
-    else:
-        for key in candidate_keys:
-            value = getattr(quant_metadata, key, None)
-            if isinstance(value, list) and all(isinstance(item, str) for item in value):
-                return value
-
-    return []
-
-
 def load_mxfp4_model_as_nf4(
     model_name: str,
     quant_config: BitsAndBytesConfig,
@@ -208,18 +184,6 @@ def main() -> None:
     tokenizer.padding_side = "right"
 
     quant_metadata, quant_method = inspect_quantization_metadata(args.model_name)
-    target_parameters = extract_target_parameters(quant_metadata)
-    if target_parameters:
-        joined_targets = ", ".join(target_parameters[:6])
-        extra = "" if len(target_parameters) <= 6 else ", ..."
-        raise RuntimeError(
-            "[train_qlora] This checkpoint stores NF4 weights using the experimental"
-            " bitsandbytes `bnb_4bit_target_parameters` feature"
-            f" ({joined_targets}{extra}).\n"
-            "Install the nightly/bleeding-edge versions of `transformers` and `bitsandbytes`"
-            " that include this feature, or regenerate a standard NF4 checkpoint by running"
-            " convert_mxfp4_to_nf4.py on the original MXFP4 model."
-        )
     quant_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_use_double_quant=True,
