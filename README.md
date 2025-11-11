@@ -5,17 +5,17 @@ This repo produces a Ziwei astrology chat dataset and fine‑tune a base model w
 ## 1. Prerequisites
 - Python 3.10+ 
 - Install dependencies:
-  ```bash
-  pip install datasets peft transformers accelerate bitsandbytes trl python-dotenv certifi py-iztro
-  ```
+```powershell
+pip install datasets peft transformers accelerate bitsandbytes trl python-dotenv certifi py-iztro
+```
 - xAI Grok API key available as `XAI_API_KEY` in your shell or a `.env` file (used by `augment.py`).
 
 ## 2. Generate Seed Ziwei Charts
 Creates unique chart descriptions with random birth data.
-```bash
-python generate_chart.py \
-  --count 500 \
-  --output dataset/ziwei_chart_dataset.jsonl \
+```powershell
+python .\generate_chart.py `
+  --count 500 `
+  --output .\dataset\ziwei_chart_dataset.jsonl
 ```
 - Optional knobs:
   - `--start-year / --end-year` to constrain birth years.
@@ -24,12 +24,12 @@ python generate_chart.py \
 
 ## 3. Augment With Grok Completions
 Calls the xAI chat API to turn each chart into an analytical answer.
-```bash
-python augment.py \
-  --input dataset/ziwei_chart_dataset.jsonl \
-  --output dataset/ziwei_answer_dataset.jsonl \
-  --model grok-4-fast \
-  --limit 500 \
+```powershell
+python .\augment.py `
+  --input .\dataset\ziwei_chart_dataset.jsonl `
+  --output .\dataset\ziwei_answer_dataset.jsonl `
+  --model grok-4-fast `
+  --limit 500 `
   --sleep 0.5
 ```
 - `--resume` appends to an existing output file while skipping prompts already processed.
@@ -37,38 +37,47 @@ python augment.py \
 
 ## 4. Flatten Prompt/Completion Pairs
 Produces a simplified JSONL with `prompt` and `completion` fields for supervised fine-tuning.
-```bash
-python extract.py \
-  --input dataset/ziwei_answer_dataset.jsonl \
-  --output dataset/ziwei_answer_dataset_prompt_completion.jsonl \
+```powershell
+python .\extract.py `
+  --input .\dataset\ziwei_answer_dataset.jsonl `
+  --output .\dataset\ziwei_answer_dataset_prompt_completion.jsonl
 ```
 
 ## 5. Convert MXFP4 Checkpoints to NF4 (one-time)
 Run the conversion script once per MXFP4 base model so future QLoRA jobs can load the already quantized NF4 checkpoint directly.
-```bash
-python convert_mxfp4_to_nf4.py \
-  --model-name openai/gpt-oss-20b \
-  --output-dir models/gpt-oss-20b-nf4 \
+```powershell
+python .\convert_mxfp4_to_nf4.py `
+  --model-name openai/gpt-oss-20b `
+  --output-dir .\models\gpt-oss-20b-nf4 `
   --attn-implementation flash_attention_2
 ```
 - The script upcasts the MXFP4 weights to BF16 on CPU, quantizes them back to 4-bit NF4 with BitsAndBytes, then calls `save_pretrained` on the result plus tokenizer.
-- Expect ~40 GB of host RAM (or swap) during the temporary BF16 stage; delete `models/gpt-oss-20b-nf4/_tmp_bf16` if an interrupted run leaves it behind.
+- Expect ~60 GB of host RAM (or swap) during the temporary BF16 stage; delete `models/gpt-oss-20b-nf4/_tmp_bf16` if an interrupted run leaves it behind.
+- WSL tip: set a generous memory ceiling and swap file in `%UserProfile%\.wslconfig`, then run `wsl --shutdown` so the new limits apply, e.g.
+  ```
+  [wsl2]
+  memory=60GB
+  processors=12
+  swap=128GB
+  swapFile=C:\\wsl-swap.vhdx
+  ```
+  WSL only uses swap after hitting the `memory` ceiling, so choose a value close to but below your physical RAM (e.g. 60 GB on a 64 GB host).
 - Use `--overwrite` when re-running the conversion into the same directory.
 - Point the `train_qlora.py --model-name` argument to the NF4 directory you just produced (e.g. `models/gpt-oss-20b-nf4`).
 
 ## 6. Fine-Tune With QLoRA
 Run minimal supervised fine-tuning against the flattened prompt/completion data.
-```bash
-python train_qlora.py \
-  --model-name models/gpt-oss-20b-nf4 \
-  --dataset-path dataset/ziwei_answer_dataset_prompt_completion.jsonl \
-  --output-dir outputs/gpt-oss-20b-qlora \
-  --max-seq-length 2048 \
-  --context-keep 256 \
-  --attn-implementation flash_attention_2 \
-  --batch-size 1 \
-  --grad-accum 8 \
-  --learning-rate 2e-4 \
+```powershell
+python .\train_qlora.py `
+  --model-name .\models\gpt-oss-20b-nf4 `
+  --dataset-path .\dataset\ziwei_answer_dataset_prompt_completion.jsonl `
+  --output-dir .\outputs\gpt-oss-20b-qlora `
+  --max-seq-length 2048 `
+  --context-keep 256 `
+  --attn-implementation flash_attention_2 `
+  --batch-size 1 `
+  --grad-accum 8 `
+  --learning-rate 2e-4 `
   --epochs 3
 ```
 - Adjust `--model-name` to point to any compatible HF checkpoint, but using the locally converted NF4 directory keeps future runs fast and memory efficient.
@@ -80,10 +89,10 @@ python train_qlora.py \
 
 ## 7. Run Inference With the Adapter
 Use the inference script to apply the fine-tuned adapter alongside the base model.
-```bash
-python infer.py \
-  --base-model gpt-oss-20b \
-  --adapter outputs/gpt-oss-20b-qlora \
-  --prompt-file prompt.txt \
-  --load-4bit 
+```powershell
+python .\infer.py `
+  --base-model gpt-oss-20b `
+  --adapter .\outputs\gpt-oss-20b-qlora `
+  --prompt-file .\prompt.txt `
+  --load-4bit
 ```
