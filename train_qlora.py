@@ -5,7 +5,6 @@ Only the essentials are retained so you can point to a model, a dataset, and an 
 
 import argparse
 import os
-import shutil
 
 import torch
 from datasets import load_dataset
@@ -94,7 +93,6 @@ def load_mxfp4_model_as_nf4(
     model_name: str,
     quant_config: BitsAndBytesConfig,
     attn_implementation: str | None,
-    tmp_root: str,
 ) -> "AutoModelForCausalLM":
     # Stage 1: dequantize MXFP4 weights to BF16 on CPU.
     dequant_kwargs = {
@@ -107,11 +105,7 @@ def load_mxfp4_model_as_nf4(
         dequant_kwargs["attn_implementation"] = attn_implementation
 
     base_model = attempt_model_load(model_name, dequant_kwargs)
-    tmp_dir = os.path.join(tmp_root, "_tmp_bf16")
-    if os.path.isdir(tmp_dir):
-        shutil.rmtree(tmp_dir)
-    os.makedirs(tmp_dir, exist_ok=True)
-    base_model.save_pretrained(tmp_dir, safe_serialization=True)
+    state_dict = base_model.state_dict()
     del base_model
     torch.cuda.empty_cache()
 
@@ -125,11 +119,8 @@ def load_mxfp4_model_as_nf4(
     if attn_implementation:
         reload_kwargs["attn_implementation"] = attn_implementation
 
-    model = attempt_model_load(tmp_dir, reload_kwargs)
-    try:
-        shutil.rmtree(tmp_dir)
-    except OSError as exc:
-        print(f"[train_qlora] Warning: failed to clean temporary BF16 directory {tmp_dir}: {exc}")
+    model = attempt_model_load(model_name, {**reload_kwargs, "state_dict": state_dict})
+    state_dict.clear()
     torch.cuda.empty_cache()
 
     return model
@@ -160,12 +151,7 @@ def main() -> None:
         print(
             "[train_qlora] Detected MXFP4 checkpoint; dequantizing to BF16 then re-quantizing to NF4 for QLoRA.",
         )
-        model = load_mxfp4_model_as_nf4(
-            args.model_name,
-            quant_config,
-            args.attn_implementation,
-            args.output_dir,
-        )
+        model = load_mxfp4_model_as_nf4(args.model_name, quant_config, args.attn_implementation)
     else:
         model_kwargs: dict[str, object] = {
             "device_map": "auto",
