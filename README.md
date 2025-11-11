@@ -43,24 +43,11 @@ python extract.py \
   --output dataset/ziwei_answer_dataset_prompt_completion.jsonl \
 ```
 
-## 5. Convert MXFP4 Checkpoints to NF4 (one-time)
-Run the conversion script once per MXFP4 base model so future QLoRA jobs can load the already quantized NF4 checkpoint directly.
-```bash
-python convert_mxfp4_to_nf4.py \
-  --model-name openai/gpt-oss-20b \
-  --output-dir models/gpt-oss-20b-nf4 \
-  --attn-implementation flash_attention_2
-```
-- The script upcasts the MXFP4 weights to BF16 on CPU, quantizes them back to 4-bit NF4 with BitsAndBytes, then calls `save_pretrained` on the result plus tokenizer.
-- Expect ~40 GB of host RAM (or swap) during the temporary BF16 stage; delete `models/gpt-oss-20b-nf4/_tmp_bf16` if an interrupted run leaves it behind.
-- Use `--overwrite` when re-running the conversion into the same directory.
-- Point the `train_qlora.py --model-name` argument to the NF4 directory you just produced (e.g. `models/gpt-oss-20b-nf4`).
-
-## 6. Fine-Tune With QLoRA
+## 5. Fine-Tune With QLoRA
 Run minimal supervised fine-tuning against the flattened prompt/completion data.
 ```bash
 python train_qlora.py \
-  --model-name models/gpt-oss-20b-nf4 \
+  --model-name gpt-oss-20b \
   --dataset-path dataset/ziwei_answer_dataset_prompt_completion.jsonl \
   --output-dir outputs/gpt-oss-20b-qlora \
   --max-seq-length 2048 \
@@ -71,14 +58,14 @@ python train_qlora.py \
   --learning-rate 2e-4 \
   --epochs 3
 ```
-- Adjust `--model-name` to point to any compatible HF checkpoint, but using the locally converted NF4 directory keeps future runs fast and memory efficient.
-- MXFP4 checkpoints such as `openai/gpt-oss-20b` are still detected automatically for backward compatibility. If you skip the explicit conversion step, the training script falls back to on-the-fly MXFP4 → BF16 → NF4 conversion (which costs extra time and RAM per run).
+- Adjust `--model-name` to point to any compatible HF checkpoint (local or remote).
+- MXFP4 checkpoints such as `openai/gpt-oss-20b` are detected automatically. The script first upcasts them to BF16, then re-quantizes to NF4 so QLoRA still runs in 4-bit. Ensure the host has ~40 GB of CPU RAM (or a large swap file) for the temporary BF16 state dict.
 - `--max-seq-length` controls chunk size; each chunk repeats the full prompt and fits within this length (default 2048 tokens).
 - `--context-keep` retains that many completion tokens from the previous chunk as loss-masked context (default 256).
 - `--attn-implementation` defaults to `flash_attention_2`; switch to `sdpa`/`eager` if FlashAttention is unavailable on your setup.
 - The trainer uses the `paged_adamw_8bit` optimizer, loads the base model in 4-bit precision, and saves only the LoRA adapter plus tokenizer.
 
-## 7. Run Inference With the Adapter
+## 6. Run Inference With the Adapter
 Use the inference script to apply the fine-tuned adapter alongside the base model.
 ```bash
 python infer.py \
