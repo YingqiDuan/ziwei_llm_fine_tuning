@@ -8,6 +8,10 @@ This repo produces a Ziwei astrology chat dataset and fine‑tune a base model w
 ```powershell
 pip install datasets peft transformers accelerate bitsandbytes trl python-dotenv certifi py-iztro
 ```
+- Experimental NF4 checkpoints that rely on `bnb_4bit_target_parameters` (such as `mdouglas/gpt-oss-20b-bnb-nf4`) require the bleeding-edge stacks of Transformers/BitsAndBytes. Upgrade them before fine-tuning:
+```powershell
+pip install --upgrade --pre transformers bitsandbytes
+```
 - xAI Grok API key available as `XAI_API_KEY` in your shell or a `.env` file (used by `augment.py`).
 
 ## 2. Generate Seed Ziwei Charts
