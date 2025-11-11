@@ -48,7 +48,7 @@ Run minimal supervised fine-tuning against the flattened prompt/completion data.
 ```bash
 python train_qlora.py \
   --model-name gpt-oss-20b \
-  --dataset-path dataset/ziwei_answer_dataset_prompt_completion.jsonl \
+  --dataset-path dataset/ziwei_answers_prompt_completion.jsonl \
   --output-dir outputs/gpt-oss-20b-qlora \
   --max-seq-length 2048 \
   --context-keep 256 \
@@ -59,7 +59,6 @@ python train_qlora.py \
   --epochs 3
 ```
 - Adjust `--model-name` to point to any compatible HF checkpoint (local or remote).
-- MXFP4 checkpoints such as `openai/gpt-oss-20b` are detected automatically. The script first upcasts them to BF16, then re-quantizes to NF4 so QLoRA still runs in 4-bit. Ensure the host has ~40 GB of CPU RAM (or a large swap file) for the temporary BF16 state dict.
 - `--max-seq-length` controls chunk size; each chunk repeats the full prompt and fits within this length (default 2048 tokens).
 - `--context-keep` retains that many completion tokens from the previous chunk as loss-masked context (default 256).
 - `--attn-implementation` defaults to `flash_attention_2`; switch to `sdpa`/`eager` if FlashAttention is unavailable on your setup.
