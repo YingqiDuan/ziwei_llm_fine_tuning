@@ -1,4 +1,4 @@
-# Fine-Tuning Astrology LLM – Minimal Workflow
+# Fine-Tuning Astrology LLM
 
 This repo produces a Ziwei astrology chat dataset and fine‑tune a base model with QLoRA. Follow the steps below in order; each stage consumes the artifacts produced by the previous one.
 
