@@ -25,7 +25,7 @@ def parse_args():
     parser.add_argument(
         "--max-seq-length",
         type=int,
-        default=2048,
+        default=1024,
         help="Maximum tokens per training sample after chunking.",
     )
     parser.add_argument(
@@ -56,16 +56,18 @@ def main() -> None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
-    quant_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.float16,
-    )
+    # quant_config = BitsAndBytesConfig(
+    #     load_in_4bit=True,
+    #     bnb_4bit_use_double_quant=True,
+    #     bnb_4bit_quant_type="nf4",
+    #     bnb_4bit_compute_dtype=torch.float16,
+    # )
 
     model_kwargs: dict[str, object] = {
-        "device_map": "auto",
-        "quantization_config": quant_config,
+        "device_map": {"": 0},
+        # "quantization_config": quant_config,
+        "low_cpu_mem_usage" : True,
+        "offload_state_dict" : False,
     }
     if args.attn_implementation:
         model_kwargs["attn_implementation"] = args.attn_implementation
@@ -95,7 +97,7 @@ def main() -> None:
     model = prepare_model_for_kbit_training(model)
 
     peft_config = LoraConfig(
-        r=64,
+        r=8,
         lora_alpha=16,
         lora_dropout=0.05,
         bias="none",
@@ -105,9 +107,9 @@ def main() -> None:
             "k_proj",
             "v_proj",
             "o_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
+            # "gate_proj",
+            # "up_proj",
+            # "down_proj",
         ],
     )
 
