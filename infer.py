@@ -8,6 +8,19 @@ import sys
 import threading
 from pathlib import Path
 
+import transformers
+
+# 🔧 关掉 Transformers 的 caching allocator warmup，避免一次性申请一大块显存
+try:
+    import transformers.modeling_utils as modeling_utils
+
+    def _no_warmup(*args, **kwargs):
+        return
+
+    modeling_utils.caching_allocator_warmup = _no_warmup
+except Exception as e:
+    print("[infer] Warning: failed to disable caching_allocator_warmup:", e)
+
 import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TextIteratorStreamer
@@ -49,7 +62,7 @@ def parse_args():
     )
     parser.add_argument(
         "--device-map",
-        default="auto",
+        default="cuda",
         help='Device map passed to from_pretrained (e.g. "auto", "cuda", "cpu").',
     )
     parser.add_argument(
