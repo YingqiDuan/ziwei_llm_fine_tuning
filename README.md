@@ -47,9 +47,9 @@ python extract.py \
 Run minimal supervised fine-tuning against the flattened prompt/completion data.
 ```bash
 python train_qlora.py \
-  --model-name gpt-oss-20b \
+  --model-name qwen2.5-7b \
   --dataset-path dataset/ziwei_answers_prompt_completion.jsonl \
-  --output-dir outputs/gpt-oss-20b-qlora \
+  --output-dir outputs/qwen2.5-7b-qlora \
   --max-seq-length 2048 \
   --context-keep 256 \
   --attn-implementation flash_attention_2 \
@@ -57,6 +57,13 @@ python train_qlora.py \
   --grad-accum 8 \
   --learning-rate 2e-4 \
   --epochs 3
+```
+```bash
+python train_qlora_unsloth.py \
+  --model-name unsloth/gpt-oss-20b-unsloth-bnb-4bit \
+  --dataset-path dataset/ziwei_prompt_completion_dataset.jsonl \
+  --output-dir ./outputs/gpt-oss-20b-qlora \
+  --save-mode merged
 ```
 - Adjust `--model-name` to point to any compatible HF checkpoint (local or remote).
 - `--max-seq-length` controls chunk size; each chunk repeats the full prompt and fits within this length (default 2048 tokens).
@@ -68,8 +75,13 @@ python train_qlora.py \
 Use the inference script to apply the fine-tuned adapter alongside the base model.
 ```bash
 python infer.py \
-  --base-model gpt-oss-20b \
-  --adapter outputs/gpt-oss-20b-qlora \
+  --base-model qwen2.5-7b \
+  --adapter outputs/qwen2.5-7b-qlora\
   --prompt-file prompt.txt \
   --load-4bit 
+```
+```bash
+python infer_unsloth.py \
+  --model-path outputs/gpt-oss-20b-qlora \
+  --prompt-file prompt.txt
 ```
