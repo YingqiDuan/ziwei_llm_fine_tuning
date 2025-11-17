@@ -1,6 +1,5 @@
 """
-Minimal QLoRA fine-tuning script for prompt/completion JSONL datasets.
-Only the essentials are retained so you can point to a model, a dataset, and an output path.
+QLoRA fine-tuning script for prompt/completion JSONL datasets.
 """
 
 import argparse
