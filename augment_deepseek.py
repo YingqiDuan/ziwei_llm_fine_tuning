@@ -18,7 +18,7 @@ from openai import OpenAI
 from prompts import DEFAULT_SYSTEM_PROMPT  # 与原脚本保持一致
 
 
-DEFAULT_MODEL = "deepseek-chat"
+DEFAULT_MODEL = "deepseek-reasoner"
 DEFAULT_SLEEP = 0.5
 
 
