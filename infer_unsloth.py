@@ -110,6 +110,7 @@ def main() -> None:
 
     # 开启 Unsloth 的推理优化（2x faster）
     FastLanguageModel.for_inference(model)
+    torch.cuda.empty_cache()
 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
