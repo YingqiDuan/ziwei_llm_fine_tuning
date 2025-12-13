@@ -17,7 +17,7 @@ from py_iztro.core.models import PalaceModel, StarModel
 # 0) Bedrock 配置
 # =========================
 REGION = "us-east-1"
-MODEL_ARN = "arn:aws:bedrock:us-east-1:123456789012:custom-model-deployment/xxxxxxxx"  
+model_arn = "arn:aws:bedrock:us-east-1:180294175444:imported-model/sjgite3xc3zf"
 
 # =========================
 # 1) 紫微斗数排盘
@@ -162,10 +162,6 @@ def render_chart(model: AstrolabeModel) -> str:
 # =========================
 
 def extract_reasoning_content(result: dict) -> str:
-    """
-    只取 OpenAI 风格返回中的 reasoning_content：
-      {"choices":[{"message":{"reasoning_content":"..."}}]}
-    """
     choices = result.get("choices") or []
     if not choices:
         return json.dumps(result, ensure_ascii=False, indent=2)
@@ -201,7 +197,7 @@ def call_bedrock(user_content: str, temperature: float = 0.0, top_p: float = 1.0
     for attempt in range(1, max_retries + 1):
         try:
             response = bedrock.invoke_model(
-                modelId=MODEL_ARN,
+                modelId=model_arn,
                 body=json.dumps(body, ensure_ascii=False).encode("utf-8"),
                 contentType="application/json",
                 accept="application/json",
@@ -212,7 +208,6 @@ def call_bedrock(user_content: str, temperature: float = 0.0, top_p: float = 1.0
         except ClientError as e:
             code = e.response.get("Error", {}).get("Code", "")
             if code == "ModelNotReadyException":
-                print(f"[attempt {attempt}] Model not ready, sleep {backoff}s ...")
                 time.sleep(backoff)
                 backoff *= 2
                 continue
@@ -248,7 +243,35 @@ def main() -> None:
         top_p=args.top_p,
     )
 
-    print(text)
+    from openai import OpenAI
+
+    OPENAI_MODEL = "gpt-5.1"
+    client_openai = OpenAI()
+
+    def translate_to_english(zh_text: str) -> str:
+        resp = client_openai.responses.create(
+            model=OPENAI_MODEL,
+            instructions=(
+                "Translate the user's Chinese text into natural English. "
+                "Preserve structure, headings, bullet points, and line breaks. "
+                "Do NOT add any extra commentary."
+            ),
+            input=zh_text,
+            temperature=0,
+        )
+        if hasattr(resp, "output_text"):
+            return (resp.output_text or "").strip()
+
+        out = []
+        for item in getattr(resp, "output", []) or []:
+            if getattr(item, "type", None) == "message":
+                for c in getattr(item, "content", []) or []:
+                    if getattr(c, "type", None) in ("output_text", "text"):
+                        out.append(getattr(c, "text", "") or "")
+        return "\n".join(out).strip()
+
+    english = translate_to_english(text)
+    print(english)
     if isinstance(raw.get("usage"), dict):
         print("usage:", raw["usage"])
 
