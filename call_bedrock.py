@@ -5,7 +5,7 @@ from botocore.exceptions import ClientError
 from prompts import DEFAULT_SYSTEM_PROMPT
 
 region = "us-east-1"
-model_arn = "arn:aws:bedrock:us-east-1:180294175444:imported-model/sjgite3xc3zf"
+model_arn = ""
 
 bedrock = boto3.client("bedrock-runtime", region_name=region)
 
