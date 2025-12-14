@@ -17,7 +17,7 @@ from py_iztro.core.models import PalaceModel, StarModel
 # 0) Bedrock 配置
 # =========================
 REGION = "us-east-1"
-model_arn = "arn:aws:bedrock:us-east-1:180294175444:imported-model/sjgite3xc3zf"
+model_arn = ""
 
 # =========================
 # 1) 紫微斗数排盘
@@ -245,8 +245,10 @@ def main() -> None:
 
     from openai import OpenAI
 
+    # translater
+    OPENAI_API_KEY =""
     OPENAI_MODEL = "gpt-5.1"
-    client_openai = OpenAI()
+    client_openai = OpenAI(api_key=OPENAI_API_KEY)
 
     def translate_to_english(zh_text: str) -> str:
         resp = client_openai.responses.create(
